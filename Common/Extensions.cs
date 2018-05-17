@@ -14,6 +14,7 @@
 */
 
 using System;
+using System.Collections;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Globalization;
@@ -1044,13 +1045,23 @@ namespace QuantConnect
             {
                 return true;
             }
-
+            
             using (Py.GIL())
             {
                 try
                 {
                     result = pyObject.AsManagedObject(typeof(T)) as T;
-                    return true;
+
+                    if (typeof(T) == typeof(Type) || result is IEnumerable)
+                    {
+                        return true;
+                    }
+
+                    // If the PyObject type and the managed object names are the same,
+                    // pyObject is a C# object wrapped in PyObject, in this case return true
+                    // Otherwise, pyObject is a python object that subclass a C# class.
+                    string name = (pyObject.GetPythonType() as dynamic).__name__;
+                    return name == result.GetType().Name;
                 }
                 catch
                 {
@@ -1112,6 +1123,25 @@ namespace QuantConnect
                 // Return false as an exception means that the conversion could not be made.
             }
             return false;
+        }
+
+        /// <summary>
+        /// Convert a <see cref="PyObject"/> into a managed object
+        /// </summary>
+        /// <typeparam name="T">Target type of the resulting managed object</typeparam>
+        /// <param name="pyObject">PyObject to be converted</param>
+        /// <returns>Instance of type T</returns>
+        public static T ConvertToDelegate<T>(this PyObject pyObject)
+        {
+            T result;
+            if (pyObject.TryConvertToDelegate(out result))
+            {
+                return result;
+            }
+            else
+            {
+                throw new ArgumentException($"ConvertToDelegate cannot be used to convert a PyObject into {typeof(T)}.");
+            }
         }
 
         /// <summary>

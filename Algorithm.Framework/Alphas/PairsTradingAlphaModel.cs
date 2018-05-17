@@ -11,7 +11,7 @@ namespace QuantConnect.Algorithm.Framework.Alphas
     /// This alpha model is designed to work against a single, predefined pair.
     /// This model generates alternating long ratio/short ratio insights emitted as a group
     /// </summary>
-    public class PairsTradingAlphaModel : IAlphaModel, INamedModel
+    public class PairsTradingAlphaModel : AlphaModel
     {
         private enum State
         {
@@ -33,11 +33,6 @@ namespace QuantConnect.Algorithm.Framework.Alphas
         private IndicatorBase<IndicatorDataPoint> _lowerThreshold;
 
         /// <summary>
-        /// Defines a name for a framework model
-        /// </summary>
-        public string Name => $"{nameof(PairsTradingAlphaModel)}({_asset1},{_asset2},{_threshold.Normalize()})";
-
-        /// <summary>
         /// Initializes a new instance of the <see cref="PairsTradingAlphaModel"/> class
         /// </summary>
         /// <param name="asset1">The first asset's symbol in the pair</param>
@@ -48,6 +43,7 @@ namespace QuantConnect.Algorithm.Framework.Alphas
             _asset1 = asset1;
             _asset2 = asset2;
             _threshold = threshold;
+            Name = $"{nameof(PairsTradingAlphaModel)}({_asset1},{_asset2},{_threshold.Normalize()})";
         }
 
         /// <summary>
@@ -57,7 +53,7 @@ namespace QuantConnect.Algorithm.Framework.Alphas
         /// <param name="algorithm">The algorithm instance</param>
         /// <param name="data">The new data available</param>
         /// <returns>The new insights generated</returns>
-        public virtual IEnumerable<Insight> Update(QCAlgorithmFramework algorithm, Slice data)
+        public override IEnumerable<Insight> Update(QCAlgorithmFramework algorithm, Slice data)
         {
             if (_mean?.IsReady != true)
             {
@@ -74,8 +70,7 @@ namespace QuantConnect.Algorithm.Framework.Alphas
                 var longAsset2 = Insight.Price(_asset2, TimeSpan.FromMinutes(15), InsightDirection.Up);
 
                 // creates a group id and set the GroupId property on each insight object
-                Insight.Group(shortAsset1, longAsset2);
-                return new[] {shortAsset1, longAsset2};
+                return Insight.Group(shortAsset1, longAsset2);
             }
 
             // don't re-emit the same direction
@@ -88,8 +83,7 @@ namespace QuantConnect.Algorithm.Framework.Alphas
                 var shortAsset2 = Insight.Price(_asset2, TimeSpan.FromMinutes(15), InsightDirection.Down);
 
                 // creates a group id and set the GroupId property on each insight object
-                Insight.Group(longAsset1, shortAsset2);
-                return new[] {longAsset1, shortAsset2};
+                return Insight.Group(longAsset1, shortAsset2);
             }
 
             return Enumerable.Empty<Insight>();
@@ -100,7 +94,7 @@ namespace QuantConnect.Algorithm.Framework.Alphas
         /// </summary>
         /// <param name="algorithm">The algorithm instance that experienced the change in securities</param>
         /// <param name="changes">The security additions and removals from the algorithm</param>
-        public virtual void OnSecuritiesChanged(QCAlgorithmFramework algorithm, SecurityChanges changes)
+        public override void OnSecuritiesChanged(QCAlgorithmFramework algorithm, SecurityChanges changes)
         {
             foreach (var added in changes.AddedSecurities)
             {

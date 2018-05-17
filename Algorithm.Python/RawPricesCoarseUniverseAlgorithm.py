@@ -20,33 +20,43 @@ from System import *
 from QuantConnect import *
 from QuantConnect.Algorithm import QCAlgorithm
 from QuantConnect.Data.UniverseSelection import *
+from QuantConnect.Orders import OrderStatus
+from QuantConnect.Orders.Fees import ConstantFeeModel
 
 ### <summary>
-### Demonstration of using coarse and fine universe selection together to filter down a smaller universe of stocks.
+### In this algorithm we demonstrate how to use the coarse fundamental data to define a universe as the top dollar volume and set the algorithm to use raw prices
 ### </summary>
 ### <meta name="tag" content="using data" />
 ### <meta name="tag" content="universes" />
 ### <meta name="tag" content="coarse universes" />
 ### <meta name="tag" content="fine universes" />
-class CoarseFundamentalTop5Algorithm(QCAlgorithm):
+class RawPricesCoarseUniverseAlgorithm(QCAlgorithm):
 
     def Initialize(self):
         '''Initialise the data and resolution required, as well as the cash and start-end dates for your algorithm. All algorithms must initialized.'''
+
+        # what resolution should the data *added* to the universe be?
+        self.UniverseSettings.Resolution = Resolution.Daily
 
         self.SetStartDate(2014,1,1)    #Set Start Date
         self.SetEndDate(2015,1,1)      #Set End Date
         self.SetCash(50000)            #Set Strategy Cash
 
-        # what resolution should the data *added* to the universe be?
-        self.UniverseSettings.Resolution = Resolution.Daily
+        # Set the security initializer with the characteristics defined in CustomSecurityInitializer
+        self.SetSecurityInitializer(self.CustomSecurityInitializer)
 
         # this add universe method accepts a single parameter that is a function that
         # accepts an IEnumerable<CoarseFundamental> and returns IEnumerable<Symbol>
         self.AddUniverse(self.CoarseSelectionFunction)
 
         self.__numberOfSymbols = 5
-        self._changes = None
 
+    def CustomSecurityInitializer(self, security):
+        '''Initialize the security with raw prices and zero fees 
+        Args:
+            security: Security which characteristics we want to change'''
+        security.SetDataNormalizationMode(DataNormalizationMode.Raw)
+        security.SetFeeModel(ConstantFeeModel(0))
 
     # sort the data by daily dollar volume and take the top 'NumberOfSymbols'
     def CoarseSelectionFunction(self, coarse):
@@ -57,28 +67,17 @@ class CoarseFundamentalTop5Algorithm(QCAlgorithm):
         return [ x.Symbol for x in sortedByDollarVolume[:self.__numberOfSymbols] ]
 
 
-    def OnData(self, data):
-
-        self.Log(f"OnData({self.UtcTime}): Keys: {', '.join([key.Value for key in data.Keys])}")
-
-        # if we have no changes, do nothing
-        if self._changes == None: return
-
+    # this event fires whenever we have changes to our universe
+    def OnSecuritiesChanged(self, changes):
         # liquidate removed securities
-        for security in self._changes.RemovedSecurities:
+        for security in changes.RemovedSecurities:
             if security.Invested:
                 self.Liquidate(security.Symbol)
 
         # we want 20% allocation in each security in our universe
-        for security in self._changes.AddedSecurities:
+        for security in changes.AddedSecurities:
             self.SetHoldings(security.Symbol, 0.2)
 
-        self._changes = None;
-
-
-    # this event fires whenever we have changes to our universe
-    def OnSecuritiesChanged(self, changes):
-        self._changes = changes
-
-    def OnOrderEvent(self, fill):
-        self.Log(f"OnOrderEvent({self.UtcTime}):: {fill}")
+    def OnOrderEvent(self, orderEvent):
+        if orderEvent.Status == OrderStatus.Filled:
+            self.Log(f"OnOrderEvent({self.UtcTime}):: {orderEvent}")
