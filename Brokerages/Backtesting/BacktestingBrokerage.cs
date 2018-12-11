@@ -20,7 +20,8 @@ using System.Linq;
 using QuantConnect.Interfaces;
 using QuantConnect.Logging;
 using QuantConnect.Orders;
-using QuantConnect.Orders.TimeInForces;
+using QuantConnect.Orders.Fills;
+using QuantConnect.Orders.Fees;
 using QuantConnect.Securities;
 using QuantConnect.Securities.Option;
 
@@ -39,14 +40,6 @@ namespace QuantConnect.Brokerages.Backtesting
         private readonly ConcurrentDictionary<int, Order> _pending;
         private readonly object _needsScanLock = new object();
         private readonly HashSet<Symbol> _pendingOptionAssignments = new HashSet<Symbol>();
-
-        private readonly Dictionary<TimeInForce, ITimeInForceHandler> _timeInForceHandlers = new Dictionary<TimeInForce, ITimeInForceHandler>
-        {
-            { TimeInForce.GoodTilCanceled, new GoodTilCanceledTimeInForceHandler() },
-            { TimeInForce.Day, new DayTimeInForceHandler() },
-            // Custom time in force will be renamed to GTD soon and will have its own new handler
-            { TimeInForce.Custom, new GoodTilCanceledTimeInForceHandler() }
-        };
 
         /// <summary>
         /// This is the algorithm under test
@@ -103,7 +96,7 @@ namespace QuantConnect.Brokerages.Backtesting
         /// <returns>The open orders returned from IB</returns>
         public override List<Order> GetOpenOrders()
         {
-            return Algorithm.Transactions.GetOpenOrders();
+            return Algorithm.Transactions.GetOpenOrders().ToList();
         }
 
         /// <summary>
@@ -237,7 +230,7 @@ namespace QuantConnect.Brokerages.Backtesting
         /// <summary>
         /// Scans all the outstanding orders and applies the algorithm model fills to generate the order events
         /// </summary>
-        public void Scan()
+        public virtual void Scan()
         {
             lock (_needsScanLock)
             {
@@ -286,10 +279,8 @@ namespace QuantConnect.Brokerages.Backtesting
                         continue;
                     }
 
-                    var timeInForceHandler = _timeInForceHandlers[order.TimeInForce];
-
                     // check if the time in force handler allows fills
-                    if (timeInForceHandler.IsOrderExpired(security, order))
+                    if (order.TimeInForce.IsOrderExpired(security, order))
                     {
                         OnOrderEvent(new OrderEvent(order, Algorithm.UtcTime, 0m)
                         {
@@ -333,36 +324,34 @@ namespace QuantConnect.Brokerages.Backtesting
                         //Based on the order type: refresh its model to get fill price and quantity
                         try
                         {
-                            switch (order.Type)
+                            if (order.Type == OrderType.OptionExercise)
                             {
-                                case OrderType.Limit:
-                                    fills = new[] { model.LimitFill(security, order as LimitOrder) };
-                                    break;
+                                var option = (Option)security;
+                                fills = option.OptionExerciseModel.OptionExercise(option, order as OptionExerciseOrder).ToArray();
+                            }
+                            else
+                            {
+                                var context = new FillModelParameters(
+                                    security,
+                                    order,
+                                    Algorithm.SubscriptionManager.SubscriptionDataConfigService);
+                                fills = new[] { model.Fill(context).OrderEvent };
+                            }
 
-                                case OrderType.StopMarket:
-                                    fills = new[] { model.StopMarketFill(security, order as StopMarketOrder) };
-                                    break;
-
-                                case OrderType.Market:
-                                    fills = new[] { model.MarketFill(security, order as MarketOrder) };
-                                    break;
-
-                                case OrderType.StopLimit:
-                                    fills = new[] { model.StopLimitFill(security, order as StopLimitOrder) };
-                                    break;
-
-                                case OrderType.MarketOnOpen:
-                                    fills = new[] { model.MarketOnOpenFill(security, order as MarketOnOpenOrder) };
-                                    break;
-
-                                case OrderType.MarketOnClose:
-                                    fills = new[] { model.MarketOnCloseFill(security, order as MarketOnCloseOrder) };
-                                    break;
-
-                                case OrderType.OptionExercise:
-                                    var option = (Option)security;
-                                    fills = option.OptionExerciseModel.OptionExercise(option, order as OptionExerciseOrder).ToArray();
-                                    break;
+                            // invoke fee models for completely filled order events
+                            foreach (var fill in fills)
+                            {
+                                if (fill.Status == OrderStatus.Filled)
+                                {
+                                    // this check is provided for backwards compatibility of older user-defined fill models
+                                    // that may be performing fee computation inside the fill model w/out invoking the fee model
+                                    // TODO : This check can be removed in April, 2019 -- a 6-month window to upgrade (also, suspect small % of users, if any are impacted)
+                                    if (fill.OrderFee == 0m)
+                                    {
+                                        fill.OrderFee = security.FeeModel.GetOrderFee(
+                                            new OrderFeeParameters(security, order)).Value.Amount;
+                                    }
+                                }
                             }
                         }
                         catch (Exception err)
@@ -386,7 +375,7 @@ namespace QuantConnect.Brokerages.Backtesting
                     foreach (var fill in fills)
                     {
                         // check if the fill should be emitted
-                        if (!timeInForceHandler.IsFillValid(security, order, fill))
+                        if (!order.TimeInForce.IsFillValid(security, order, fill))
                         {
                             break;
                         }

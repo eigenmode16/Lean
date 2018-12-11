@@ -27,6 +27,8 @@ using QuantConnect.Configuration;
 using QuantConnect.Interfaces;
 using QuantConnect.Logging;
 using QuantConnect.Orders;
+using QuantConnect.Orders.Fees;
+using QuantConnect.Orders.TimeInForces;
 using QuantConnect.Securities;
 using QuantConnect.Securities.Equity;
 using QuantConnect.Util;
@@ -1350,7 +1352,8 @@ namespace QuantConnect.Brokerages.Tradier
                 {
                     cachedOrder.EmittedOrderFee = true;
                     var security = _securityProvider.GetSecurity(qcOrder.Symbol);
-                    fill.OrderFee = security.FeeModel.GetOrderFee(security, qcOrder);
+                    fill.OrderFee = security.FeeModel.GetOrderFee(
+                        new OrderFeeParameters(security, qcOrder)).Value.Amount;
                 }
 
                 // if we filled the order and have another contingent order waiting, submit it
@@ -1556,8 +1559,10 @@ namespace QuantConnect.Brokerages.Tradier
             {
                 case TradierOrderDuration.GTC:
                     return TimeInForce.GoodTilCanceled;
+
                 case TradierOrderDuration.Day:
-                    return (TimeInForce) 1; //.Day;
+                    return TimeInForce.Day;
+
                 default:
                     throw new ArgumentOutOfRangeException();
             }
@@ -1752,15 +1757,19 @@ namespace QuantConnect.Brokerages.Tradier
         /// <summary>
         /// Converts the qc order duration into a tradier order duration
         /// </summary>
-        protected static TradierOrderDuration GetOrderDuration(TimeInForce duration)
+        protected static TradierOrderDuration GetOrderDuration(TimeInForce timeInForce)
         {
-            switch (duration)
+            if (timeInForce is GoodTilCanceledTimeInForce)
             {
-                case TimeInForce.GoodTilCanceled:
-                    return TradierOrderDuration.GTC;
-                default:
-                    throw new ArgumentOutOfRangeException();
+                return TradierOrderDuration.GTC;
             }
+
+            if (timeInForce is DayTimeInForce)
+            {
+                return TradierOrderDuration.Day;
+            }
+
+            throw new ArgumentOutOfRangeException();
         }
 
         /// <summary>

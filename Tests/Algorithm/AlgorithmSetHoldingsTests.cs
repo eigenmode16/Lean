@@ -22,6 +22,7 @@ using QuantConnect.Data.Market;
 using QuantConnect.Orders;
 using QuantConnect.Orders.Fees;
 using QuantConnect.Securities;
+using QuantConnect.Tests.Engine.DataFeeds;
 
 namespace QuantConnect.Tests.Algorithm
 {
@@ -33,9 +34,10 @@ namespace QuantConnect.Tests.Algorithm
         {
             public TestSecurityMarginModel(decimal leverage) : base(leverage) { }
 
-            public new decimal GetInitialMarginRequiredForOrder(Security security, Order order)
+            public new decimal GetInitialMarginRequiredForOrder(
+                InitialMarginRequiredForOrderParameters parameters)
             {
-                return base.GetInitialMarginRequiredForOrder(security, order);
+                return base.GetInitialMarginRequiredForOrder(parameters);
             }
 
             public new decimal GetMarginRemaining(SecurityPortfolioManager portfolio, Security security, OrderDirection direction)
@@ -137,6 +139,7 @@ namespace QuantConnect.Tests.Algorithm
             //Console.WriteLine();
 
             var algorithm = new QCAlgorithm();
+            algorithm.SubscriptionManager.SetDataManager(new DataManagerStub(algorithm));
 
             var security = algorithm.AddSecurity(_symbol.ID.SecurityType, _symbol.ID.Symbol);
             security.FeeModel = _feeModels[feeType];
@@ -164,7 +167,8 @@ namespace QuantConnect.Tests.Algorithm
                 orderQuantity = algorithm.CalculateOrderQuantity(_symbol, targetPercentage);
                 order = new MarketOrder(_symbol, orderQuantity, DateTime.UtcNow);
                 freeMargin = buyingPowerModel.GetMarginRemaining(algorithm.Portfolio, security, orderDirection);
-                requiredMargin = buyingPowerModel.GetInitialMarginRequiredForOrder(security, order);
+                requiredMargin = buyingPowerModel.GetInitialMarginRequiredForOrder(
+                    new InitialMarginRequiredForOrderParameters(new IdentityCurrencyConverter("USD"), security, order));
 
                 //Console.WriteLine("Current price: " + security.Price);
                 //Console.WriteLine("Target percentage: " + targetPercentage);
@@ -176,7 +180,8 @@ namespace QuantConnect.Tests.Algorithm
 
                 Assert.That(Math.Abs(requiredMargin) <= freeMargin);
 
-                orderFee = security.FeeModel.GetOrderFee(security, order);
+                orderFee = security.FeeModel.GetOrderFee(
+                    new OrderFeeParameters(security, order)).Value.Amount;
                 fill = new OrderEvent(order, DateTime.UtcNow, orderFee) { FillPrice = security.Price, FillQuantity = orderQuantity };
                 algorithm.Portfolio.ProcessFill(fill);
 
@@ -207,7 +212,8 @@ namespace QuantConnect.Tests.Algorithm
             orderQuantity = algorithm.CalculateOrderQuantity(_symbol, targetPercentage);
             order = new MarketOrder(_symbol, orderQuantity, DateTime.UtcNow);
             freeMargin = buyingPowerModel.GetMarginRemaining(algorithm.Portfolio, security, orderDirection);
-            requiredMargin = buyingPowerModel.GetInitialMarginRequiredForOrder(security, order);
+            requiredMargin = buyingPowerModel.GetInitialMarginRequiredForOrder(
+                new InitialMarginRequiredForOrderParameters(new IdentityCurrencyConverter("USD"), security, order));
 
             //Console.WriteLine("Current price: " + security.Price);
             //Console.WriteLine("Target percentage: " + targetPercentage);
@@ -219,7 +225,8 @@ namespace QuantConnect.Tests.Algorithm
 
             Assert.That(Math.Abs(requiredMargin) <= freeMargin);
 
-            orderFee = security.FeeModel.GetOrderFee(security, order);
+            orderFee = security.FeeModel.GetOrderFee(
+                new OrderFeeParameters(security, order)).Value.Amount;
             fill = new OrderEvent(order, DateTime.UtcNow, orderFee) { FillPrice = security.Price, FillQuantity = orderQuantity };
             algorithm.Portfolio.ProcessFill(fill);
 

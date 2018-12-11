@@ -15,15 +15,19 @@ from clr import AddReference
 AddReference("System")
 AddReference("QuantConnect.Common")
 AddReference("QuantConnect.Indicators")
+AddReference("QuantConnect.Algorithm")
 AddReference("QuantConnect.Algorithm.Framework")
 
 from System import *
 from QuantConnect import *
 from QuantConnect.Indicators import *
-from QuantConnect.Data.Market import Tick, TradeBar
+from QuantConnect.Data import *
+from QuantConnect.Data.Market import *
 from QuantConnect.Orders import *
-from QuantConnect.Algorithm.Framework.Execution import ExecutionModel, OrderSizing
-from QuantConnect.Algorithm.Framework.Portfolio import PortfolioTargetCollection
+from QuantConnect.Algorithm import *
+from QuantConnect.Algorithm.Framework import *
+from QuantConnect.Algorithm.Framework.Execution import *
+from QuantConnect.Algorithm.Framework.Portfolio import *
 import numpy as np
 from datetime import datetime
 
@@ -52,7 +56,7 @@ class VolumeWeightedAveragePriceExecutionModel(ExecutionModel):
         # update the complete set of portfolio targets with the new targets
         self.targetsCollection.AddRange(targets)
 
-        for target in self.targetsCollection:
+        for target in self.targetsCollection.OrderByMarginImpact(algorithm):
             symbol = target.Symbol
 
             # calculate remaining quantity to be ordered
@@ -61,9 +65,6 @@ class VolumeWeightedAveragePriceExecutionModel(ExecutionModel):
             # fetch our symbol data containing our VWAP indicator
             data = self.symbolData.get(symbol, None)
             if data is None: return
-
-            # ensure we're receiving price data before submitting orders
-            if data.Security.Price == 0: return
 
             # check order entry conditions
             if self.PriceIsFavorable(data, unorderedQuantity):
@@ -76,10 +77,7 @@ class VolumeWeightedAveragePriceExecutionModel(ExecutionModel):
                 if orderSize != 0:
                     algorithm.MarketOrder(symbol, np.sign(unorderedQuantity) * orderSize)
 
-            # check to see if we're done with this target
-            unorderedQuantity = OrderSizing.GetUnorderedQuantity(algorithm, target)
-            if unorderedQuantity == 0:
-                self.targetsCollection.Remove(target.Symbol)
+        self.targetsCollection.ClearFulfilled(algorithm)
 
 
     def OnSecuritiesChanged(self, algorithm, changes):

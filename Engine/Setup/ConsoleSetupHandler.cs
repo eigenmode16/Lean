@@ -44,7 +44,7 @@ namespace QuantConnect.Lean.Engine.Setup
         /// <summary>
         /// Maximum runtime of the strategy. (Set to 10 years for local backtesting).
         /// </summary>
-        public TimeSpan MaximumRuntime { get; private set; }
+        public TimeSpan MaximumRuntime { get; }
 
         /// <summary>
         /// Starting capital for the algorithm (Loaded from the algorithm code).
@@ -59,7 +59,7 @@ namespace QuantConnect.Lean.Engine.Setup
         /// <summary>
         /// Maximum number of orders for this backtest.
         /// </summary>
-        public int MaxOrders { get; private set; }
+        public int MaxOrders { get; }
 
         /// <summary>
         /// Setup the algorithm data, cash, job start end date etc:
@@ -89,7 +89,7 @@ namespace QuantConnect.Lean.Engine.Setup
             // and step through some code that may take us longer than the default 10 seconds
             var loader = new Loader(algorithmNodePacket.Language, TimeSpan.FromHours(1), names => names.SingleOrDefault(name => MatchTypeName(name, algorithmName)));
             var complete = loader.TryCreateAlgorithmInstanceWithIsolator(assemblyPath, algorithmNodePacket.RamAllocation, out algorithm, out error);
-            if (!complete) throw new Exception(error + ": try re-building algorithm.");
+            if (!complete) throw new AlgorithmSetupException($"During the algorithm initialization, the following exception has occurred: {error}");
 
             return algorithm;
         }
@@ -130,6 +130,11 @@ namespace QuantConnect.Lean.Engine.Setup
                 if (baseJob.Type == PacketType.BacktestNode)
                 {
                     var backtestJob = baseJob as BacktestNodePacket;
+                    if (backtestJob == null)
+                    {
+                        throw new ArgumentException("Expected BacktestNodePacket but received " + baseJob.GetType().Name);
+                    }
+
                     algorithm.SetMaximumOrders(int.MaxValue);
 
                     // set our parameters
@@ -158,10 +163,6 @@ namespace QuantConnect.Lean.Engine.Setup
                     //Construct the backtest job packet:
                     backtestJob.PeriodStart = algorithm.StartDate;
                     backtestJob.PeriodFinish = algorithm.EndDate;
-                    backtestJob.BacktestId = algorithm.GetType().Name;
-                    backtestJob.Type = PacketType.BacktestNode;
-                    backtestJob.UserId = baseJob.UserId;
-                    backtestJob.Channel = baseJob.Channel;
 
                     //Backtest Specific Parameters:
                     StartingDate = backtestJob.PeriodStart;
