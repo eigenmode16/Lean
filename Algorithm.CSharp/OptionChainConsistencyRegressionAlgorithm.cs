@@ -72,7 +72,9 @@ namespace QuantConnect.Algorithm.CSharp
                         if (!Securities.ContainsKey(o.Symbol))
                         {
                             // inconsistency found: option chains contains contract information that is not available in securities manager and not available for trading
-                            throw new Exception(string.Format("inconsistency found: option chains contains contract {0} that is not available in securities manager and not available for trading", o.Symbol.Value));
+                            throw new Exception("inconsistency found: option chains contains contract " +
+                                $"{o.Symbol.Value} that is not available in securities manager and not available for trading"
+                            );
                         }
                     }
 
@@ -121,23 +123,23 @@ namespace QuantConnect.Algorithm.CSharp
         {
             {"Total Trades", "2"},
             {"Average Win", "0%"},
-            {"Average Loss", "-3.86%"},
+            {"Average Loss", "-3.87%"},
             {"Compounding Annual Return", "-100.000%"},
             {"Drawdown", "3.900%"},
             {"Expectancy", "-1"},
-            {"Net Profit", "-3.855%"},
-            {"Sharpe Ratio", "0"},
+            {"Net Profit", "-3.870%"},
+            {"Sharpe Ratio", "-11.225"},
             {"Loss Rate", "100%"},
             {"Win Rate", "0%"},
             {"Profit-Loss Ratio", "0"},
             {"Alpha", "0"},
             {"Beta", "0"},
-            {"Annual Standard Deviation", "0"},
-            {"Annual Variance", "0"},
+            {"Annual Standard Deviation", "0.434"},
+            {"Annual Variance", "0.189"},
             {"Information Ratio", "0"},
             {"Tracking Error", "0"},
             {"Treynor Ratio", "0"},
-            {"Total Fees", "$0.50"}
+            {"Total Fees", "$2.00"}
         };
     }
 }

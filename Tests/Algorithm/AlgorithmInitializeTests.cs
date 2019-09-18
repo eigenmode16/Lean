@@ -50,7 +50,7 @@ namespace QuantConnect.Tests.Algorithm
             var fee = security.FeeModel.GetOrderFee(
                 new OrderFeeParameters(security, _order));
             Assert.AreEqual(0.04, fee.Value.Amount);
-            Assert.AreEqual("USD", fee.Value.Currency);
+            Assert.AreEqual(Currencies.USD, fee.Value.Currency);
         }
 
         [Test]
@@ -67,7 +67,7 @@ namespace QuantConnect.Tests.Algorithm
             var fee = security.FeeModel.GetOrderFee(
                 new OrderFeeParameters(security, _order));
             Assert.AreEqual(2, fee.Value.Amount);
-            Assert.AreEqual("USD", fee.Value.Currency);
+            Assert.AreEqual(Currencies.USD, fee.Value.Currency);
         }
 
         [Test]
@@ -84,7 +84,7 @@ namespace QuantConnect.Tests.Algorithm
             var fee = security.FeeModel.GetOrderFee(
                 new OrderFeeParameters(security, _order));
             Assert.AreEqual(0.04, fee.Value.Amount);
-            Assert.AreEqual("USD", fee.Value.Currency);
+            Assert.AreEqual(Currencies.USD, fee.Value.Currency);
         }
 
         [Test]
@@ -102,7 +102,7 @@ namespace QuantConnect.Tests.Algorithm
             var fee = security.FeeModel.GetOrderFee(
                 new OrderFeeParameters(security, _order));
             Assert.AreEqual(0.04, fee.Value.Amount);
-            Assert.AreEqual("USD", fee.Value.Currency);
+            Assert.AreEqual(Currencies.USD, fee.Value.Currency);
         }
 
         [Test]
@@ -120,7 +120,7 @@ namespace QuantConnect.Tests.Algorithm
             var fee = security.FeeModel.GetOrderFee(
                 new OrderFeeParameters(security, _order));
             Assert.AreEqual(0.04, fee.Value.Amount);
-            Assert.AreEqual("USD", fee.Value.Currency);
+            Assert.AreEqual(Currencies.USD, fee.Value.Currency);
         }
 
         [Test]
@@ -141,7 +141,7 @@ namespace QuantConnect.Tests.Algorithm
             var fee = security.FeeModel.GetOrderFee(
                 new OrderFeeParameters(security, _order));
             Assert.AreEqual(2, fee.Value.Amount);
-            Assert.AreEqual("USD", fee.Value.Currency);
+            Assert.AreEqual(Currencies.USD, fee.Value.Currency);
         }
 
         [Test]
@@ -163,7 +163,7 @@ namespace QuantConnect.Tests.Algorithm
             var fee = security.FeeModel.GetOrderFee(
                 new OrderFeeParameters(security, _order));
             Assert.AreEqual(0, fee.Value.Amount);
-            Assert.AreEqual("USD", fee.Value.Currency);
+            Assert.AreEqual(Currencies.USD, fee.Value.Currency);
         }
 
         [Test]
@@ -185,7 +185,7 @@ namespace QuantConnect.Tests.Algorithm
             var fee = security.FeeModel.GetOrderFee(
                 new OrderFeeParameters(security, _order));
             Assert.AreEqual(2, fee.Value.Amount);
-            Assert.AreEqual("USD", fee.Value.Currency);
+            Assert.AreEqual(Currencies.USD, fee.Value.Currency);
         }
 
         [Test]
@@ -208,7 +208,7 @@ namespace QuantConnect.Tests.Algorithm
             var fee = security.FeeModel.GetOrderFee(
                 new OrderFeeParameters(security, _order));
             Assert.AreEqual(0, fee.Value.Amount);
-            Assert.AreEqual("USD", fee.Value.Currency);
+            Assert.AreEqual(Currencies.USD, fee.Value.Currency);
         }
 
         [Test]
@@ -231,7 +231,7 @@ namespace QuantConnect.Tests.Algorithm
             var fee = security.FeeModel.GetOrderFee(
                 new OrderFeeParameters(security, _order));
             Assert.AreEqual(2, fee.Value.Amount);
-            Assert.AreEqual("USD", fee.Value.Currency);
+            Assert.AreEqual(Currencies.USD, fee.Value.Currency);
         }
 
         [Test]
@@ -254,7 +254,7 @@ namespace QuantConnect.Tests.Algorithm
             var fee = security.FeeModel.GetOrderFee(
                 new OrderFeeParameters(security, _order));
             Assert.AreEqual(2, fee.Value.Amount);
-            Assert.AreEqual("USD", fee.Value.Currency);
+            Assert.AreEqual(Currencies.USD, fee.Value.Currency);
         }
 
         [Test]
@@ -277,7 +277,7 @@ namespace QuantConnect.Tests.Algorithm
             var fee = security.FeeModel.GetOrderFee(
                 new OrderFeeParameters(security, _order));
             Assert.AreEqual(2, fee.Value.Amount);
-            Assert.AreEqual("USD", fee.Value.Currency);
+            Assert.AreEqual(Currencies.USD, fee.Value.Currency);
         }
 
         [Test]
@@ -300,7 +300,7 @@ namespace QuantConnect.Tests.Algorithm
             var fee = security.FeeModel.GetOrderFee(
                 new OrderFeeParameters(security, _order));
             Assert.AreEqual(0.04, fee.Value.Amount);
-            Assert.AreEqual("USD", fee.Value.Currency);
+            Assert.AreEqual(Currencies.USD, fee.Value.Currency);
         }
 
         [Test]
@@ -323,7 +323,7 @@ namespace QuantConnect.Tests.Algorithm
             var fee = security.FeeModel.GetOrderFee(
                 new OrderFeeParameters(security, _order));
             Assert.AreEqual(0, fee.Value.Amount);
-            Assert.AreEqual("USD", fee.Value.Currency);
+            Assert.AreEqual(Currencies.USD, fee.Value.Currency);
         }
 
         [Test]
@@ -346,7 +346,7 @@ namespace QuantConnect.Tests.Algorithm
             var fee = security.FeeModel.GetOrderFee(
                 new OrderFeeParameters(security, _order));
             Assert.AreEqual(0.04, fee.Value.Amount);
-            Assert.AreEqual("USD", fee.Value.Currency);
+            Assert.AreEqual(Currencies.USD, fee.Value.Currency);
         }
 
         [Test]
@@ -369,7 +369,7 @@ namespace QuantConnect.Tests.Algorithm
             var fee = security.FeeModel.GetOrderFee(
                 new OrderFeeParameters(security, _order));
             Assert.AreEqual(2, fee.Value.Amount);
-            Assert.AreEqual("USD", fee.Value.Currency);
+            Assert.AreEqual(Currencies.USD, fee.Value.Currency);
         }
 
         [Test]
@@ -393,7 +393,7 @@ namespace QuantConnect.Tests.Algorithm
             var fee = security.FeeModel.GetOrderFee(
                 new OrderFeeParameters(security, _order));
             Assert.AreEqual(2, fee.Value.Amount);
-            Assert.AreEqual("USD", fee.Value.Currency);
+            Assert.AreEqual(Currencies.USD, fee.Value.Currency);
         }
 
         [Test]
@@ -417,7 +417,7 @@ namespace QuantConnect.Tests.Algorithm
             var fee = security.FeeModel.GetOrderFee(
                 new OrderFeeParameters(security, _order));
             Assert.AreEqual(2, fee.Value.Amount);
-            Assert.AreEqual("USD", fee.Value.Currency);
+            Assert.AreEqual(Currencies.USD, fee.Value.Currency);
         }
 
         [Test]
@@ -440,7 +440,7 @@ namespace QuantConnect.Tests.Algorithm
             var fee = security.FeeModel.GetOrderFee(
                 new OrderFeeParameters(security, _order));
             Assert.AreEqual(0.04, fee.Value.Amount);
-            Assert.AreEqual("USD", fee.Value.Currency);
+            Assert.AreEqual(Currencies.USD, fee.Value.Currency);
         }
 
         [Test]
@@ -463,7 +463,7 @@ namespace QuantConnect.Tests.Algorithm
             var fee = security.FeeModel.GetOrderFee(
                 new OrderFeeParameters(security, _order));
             Assert.AreEqual(0, fee.Value.Amount);
-            Assert.AreEqual("USD", fee.Value.Currency);
+            Assert.AreEqual(Currencies.USD, fee.Value.Currency);
         }
 
         [Test]
@@ -486,7 +486,7 @@ namespace QuantConnect.Tests.Algorithm
             var fee = security.FeeModel.GetOrderFee(
                 new OrderFeeParameters(security, _order));
             Assert.AreEqual(0.04, fee.Value.Amount);
-            Assert.AreEqual("USD", fee.Value.Currency);
+            Assert.AreEqual(Currencies.USD, fee.Value.Currency);
         }
 
         private QCAlgorithm GetAlgorithm()

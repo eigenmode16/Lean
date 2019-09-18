@@ -28,7 +28,6 @@ using QuantConnect.Lean.Engine;
 using QuantConnect.Lean.Engine.DataFeeds;
 using QuantConnect.Lean.Engine.RealTime;
 using QuantConnect.Lean.Engine.Results;
-using QuantConnect.Lean.Engine.Setup;
 using QuantConnect.Lean.Engine.TransactionHandlers;
 using QuantConnect.Messaging;
 using QuantConnect.Packets;
@@ -56,7 +55,7 @@ namespace QuantConnect.Tests.Brokerages.Paper
             SPY.Holdings.SetHoldings(100m, 1000);
 
             // resolve expected outcome
-            var USD = algorithm.Portfolio.CashBook["USD"];
+            var USD = algorithm.Portfolio.CashBook[Currencies.USD];
             var preDistributionCash = USD.Amount;
             var distributionPerShare = 10m;
             var expectedTotalDistribution = distributionPerShare * SPY.Holdings.Quantity;
@@ -93,7 +92,8 @@ namespace QuantConnect.Tests.Brokerages.Paper
                     new SecurityService(algorithm.Portfolio.CashBook, marketHoursDatabase, symbolPropertiesDataBase, algorithm)),
                 algorithm,
                 algorithm.TimeKeeper,
-                marketHoursDatabase);
+                marketHoursDatabase,
+                true);
             var synchronizer = new NullSynchronizer(algorithm, dividend);
 
             algorithm.SubscriptionManager.SetDataManager(dataManager);
@@ -101,7 +101,7 @@ namespace QuantConnect.Tests.Brokerages.Paper
             algorithm.Securities[Symbols.SPY].Holdings.SetHoldings(100m, 1);
             algorithm.PostInitialize();
 
-            var initializedCash = algorithm.Portfolio.CashBook["USD"].Amount;
+            var initializedCash = algorithm.Portfolio.CashBook[Currencies.USD].Amount;
 
             // init algorithm manager
             var manager = new AlgorithmManager(true);
@@ -116,14 +116,13 @@ namespace QuantConnect.Tests.Brokerages.Paper
             var brokerage = new PaperBrokerage(algorithm, job);
 
             // initialize results and transactions
-            results.Initialize(job, new EventMessagingHandler(), new Api.Api(), new BrokerageSetupHandler(), transactions);
-            results.SetAlgorithm(algorithm);
+            results.Initialize(job, new EventMessagingHandler(), new Api.Api(), transactions);
+            results.SetAlgorithm(algorithm, algorithm.Portfolio.TotalPortfolioValue);
             transactions.Initialize(algorithm, brokerage, results);
 
             // run algorithm manager
             manager.Run(job,
                 algorithm,
-                dataManager,
                 synchronizer,
                 transactions,
                 results,
@@ -133,7 +132,7 @@ namespace QuantConnect.Tests.Brokerages.Paper
                 new CancellationToken()
             );
 
-            var postDividendCash = algorithm.Portfolio.CashBook["USD"].Amount;
+            var postDividendCash = algorithm.Portfolio.CashBook[Currencies.USD].Amount;
 
             Assert.AreEqual(initializedCash + dividend.Distribution, postDividendCash);
         }

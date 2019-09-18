@@ -38,8 +38,6 @@ namespace QuantConnect.Scheduling
 
         private bool _needsMoveNext;
         private bool _endOfScheduledEvents;
-
-        private readonly string _name;
         private readonly Action<string, DateTime> _callback;
         private readonly IEnumerator<DateTime> _orderedEventUtcTimes;
 
@@ -75,10 +73,7 @@ namespace QuantConnect.Scheduling
         /// <summary>
         /// Gets an identifier for this event
         /// </summary>
-        public string Name
-        {
-            get { return _name; }
-        }
+        public string Name { get; }
 
         /// <summary>
         /// Initalizes a new instance of the <see cref="ScheduledEvent"/> class
@@ -110,7 +105,7 @@ namespace QuantConnect.Scheduling
         /// <param name="callback">Delegate to be called each time an event passes</param>
         public ScheduledEvent(string name, IEnumerator<DateTime> orderedEventUtcTimes, Action<string, DateTime> callback = null)
         {
-            _name = name;
+            Name = name;
             _callback = callback;
             _orderedEventUtcTimes = orderedEventUtcTimes;
 
@@ -157,14 +152,14 @@ namespace QuantConnect.Scheduling
                     {
                         if (IsLoggingEnabled)
                         {
-                            Log.Trace(string.Format("ScheduledEvent.{0}: Completed scheduled events.", Name));
+                            Log.Trace($"ScheduledEvent.{Name}: Completed scheduled events.");
                         }
                         _endOfScheduledEvents = true;
                         return;
                     }
                     if (IsLoggingEnabled)
                     {
-                        Log.Trace(string.Format("ScheduledEvent.{0}: Next event: {1} UTC", Name, _orderedEventUtcTimes.Current.ToString(DateFormat.UI)));
+                        Log.Trace($"ScheduledEvent.{Name}: Next event: {_orderedEventUtcTimes.Current.ToStringInvariant(DateFormat.UI)} UTC");
                     }
                 }
 
@@ -173,10 +168,9 @@ namespace QuantConnect.Scheduling
                 {
                     if (IsLoggingEnabled)
                     {
-                        Log.Trace(string.Format("ScheduledEvent.{0}: Firing at {1} UTC Scheduled at {2} UTC", Name,
-                            utcTime.ToString(DateFormat.UI),
-                            _orderedEventUtcTimes.Current.ToString(DateFormat.UI))
-                            );
+                        Log.Trace($"ScheduledEvent.{Name}: Firing at {utcTime.ToStringInvariant(DateFormat.UI)} UTC " +
+                            $"Scheduled at {_orderedEventUtcTimes.Current.ToStringInvariant(DateFormat.UI)} UTC"
+                        );
                     }
                     // fire the event
                     OnEventFired(_orderedEventUtcTimes.Current);
@@ -213,21 +207,26 @@ namespace QuantConnect.Scheduling
 
                     if (IsLoggingEnabled)
                     {
-                        Log.Trace(string.Format("ScheduledEvent.{0}: Skipped events before {1}. Next event: {2}", Name,
-                            utcTime.ToString(DateFormat.UI),
-                            _orderedEventUtcTimes.Current.ToString(DateFormat.UI)
-                            ));
+                        Log.Trace($"ScheduledEvent.{Name}: Skipped events before {utcTime.ToStringInvariant(DateFormat.UI)}. " +
+                            $"Next event: {_orderedEventUtcTimes.Current.ToStringInvariant(DateFormat.UI)}"
+                        );
                     }
                     return;
                 }
             }
             if (IsLoggingEnabled)
             {
-                Log.Trace(string.Format("ScheduledEvent.{0}: Exhausted event stream during skip until {1}", Name,
-                    utcTime.ToString(DateFormat.UI)
-                    ));
+                Log.Trace($"ScheduledEvent.{Name}: Exhausted event stream during skip until {utcTime.ToStringInvariant(DateFormat.UI)}");
             }
             _endOfScheduledEvents = true;
+        }
+
+        /// <summary>
+        /// Will return the ScheduledEvents name
+        /// </summary>
+        public override string ToString()
+        {
+            return $"{Name}";
         }
 
         /// <summary>
@@ -252,10 +251,10 @@ namespace QuantConnect.Scheduling
 
                 if (_callback != null)
                 {
-                    _callback(_name, _orderedEventUtcTimes.Current);
+                    _callback(Name, _orderedEventUtcTimes.Current);
                 }
                 var handler = EventFired;
-                if (handler != null) handler(_name, triggerTime);
+                if (handler != null) handler(Name, triggerTime);
             }
             catch (Exception ex)
             {
@@ -263,7 +262,7 @@ namespace QuantConnect.Scheduling
 
                 // This scheduled event failed, so don't repeat the same event
                 _needsMoveNext = true;
-                throw new ScheduledEventException(_name, ex.Message, ex);
+                throw new ScheduledEventException(Name, ex.Message, ex);
             }
         }
     }

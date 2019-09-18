@@ -23,12 +23,10 @@ using QuantConnect.Data;
 using QuantConnect.Data.Auxiliary;
 using QuantConnect.Data.Custom;
 using QuantConnect.Data.Custom.Tiingo;
-using QuantConnect.Data.Market;
 using QuantConnect.Interfaces;
 using QuantConnect.Lean.Engine.DataFeeds.Enumerators;
 using QuantConnect.Logging;
 using QuantConnect.Securities.Option;
-using QuantConnect.Util;
 
 namespace QuantConnect.Lean.Engine.DataFeeds
 {
@@ -130,7 +128,7 @@ namespace QuantConnect.Lean.Engine.DataFeeds
         /// <param name="mapFileResolver">Used for resolving the correct map files</param>
         /// <param name="factorFileProvider">Used for getting factor files</param>
         /// <param name="dataCacheProvider">Used for caching files</param>
-        /// <param name="tradeableDates">Defines the dates for which we'll request data, in order, in the security's exchange time zone</param>
+        /// <param name="tradeableDates">Defines the dates for which we'll request data, in order, in the security's data time zone</param>
         /// <param name="isLiveMode">True if we're in live mode, false otherwise</param>
         public SubscriptionDataReader(SubscriptionDataConfig config,
             DateTime periodStart,
@@ -169,25 +167,16 @@ namespace QuantConnect.Lean.Engine.DataFeeds
             }
 
             //Save the type of data we'll be getting from the source.
-
-            //Create the dynamic type-activators:
-            var objectActivator = ObjectActivator.GetActivator(_config.Type);
-
-            if (objectActivator == null)
+            try
             {
-                OnInvalidConfigurationDetected(
-                    new InvalidConfigurationDetectedEventArgs(
-                        $"Custom data type \'{_config.Type.Name}\' missing parameterless constructor " +
-                        $"E.g. public {_config.Type.Name}() {{ }}"));
-
+                _dataFactory = _config.Type.GetBaseDataInstance();
+            }
+            catch (ArgumentException exception)
+            {
+                OnInvalidConfigurationDetected(new InvalidConfigurationDetectedEventArgs(exception.Message));
                 _endOfStream = true;
                 return;
             }
-
-            //Create an instance of the "Type":
-            var userObj = objectActivator.Invoke(new object[] { _config.Type });
-
-            _dataFactory = userObj as BaseData;
 
             //If its quandl set the access token in data factory:
             var quandl = _dataFactory as Quandl;
@@ -209,36 +198,54 @@ namespace QuantConnect.Lean.Engine.DataFeeds
                 }
             }
 
+            // If USEnergyInformation data, set the access token in data factory
+            var energyInformation = _dataFactory as USEnergyInformation;
+            if (energyInformation != null)
+            {
+                if (!USEnergyInformation.IsAuthCodeSet)
+                {
+                    USEnergyInformation.SetAuthCode(Config.Get("us-energy-information-auth-token"));
+                }
+            }
+
             _factorFile = new FactorFile(_config.Symbol.Value, new List<FactorFileRow>());
             _mapFile = new MapFile(_config.Symbol.Value, new List<MapFileRow>());
 
-            // load up the map and factor files for equities
-            if (!_config.IsCustomData && _config.SecurityType == SecurityType.Equity)
+            // load up the map files for equities, options, and custom data if it supports it.
+            // Only load up factor files for equities
+            if (_config.TickerShouldBeMapped())
             {
                 try
                 {
-                    var mapFile = _mapFileResolver.ResolveMapFile(_config.Symbol.ID.Symbol, _config.Symbol.ID.Date);
+                    // Load the symbol and date to complete the mapFile checks in one statement
+                    var symbol = _config.Symbol.HasUnderlying ? _config.Symbol.Underlying.ID.Symbol : _config.Symbol.ID.Symbol;
+                    var date = _config.Symbol.HasUnderlying ? _config.Symbol.Underlying.ID.Date : _config.Symbol.ID.Date;
+
+                    var mapFile = _mapFileResolver.ResolveMapFile(symbol, date);
 
                     // only take the resolved map file if it has data, otherwise we'll use the empty one we defined above
                     if (mapFile.Any()) _mapFile = mapFile;
 
-                    var factorFile = _factorFileProvider.Get(_config.Symbol);
-                    _hasScaleFactors = factorFile != null;
-                    if (_hasScaleFactors)
+                    if (!_config.IsCustomData && _config.SecurityType != SecurityType.Option)
                     {
-                        _factorFile = factorFile;
-
-                        // if factor file has minimum date, update start period if before minimum date
-                        if (!_isLiveMode && _factorFile != null && _factorFile.FactorFileMinimumDate.HasValue)
+                        var factorFile = _factorFileProvider.Get(_config.Symbol);
+                        _hasScaleFactors = factorFile != null;
+                        if (_hasScaleFactors)
                         {
-                            if (_periodStart < _factorFile.FactorFileMinimumDate.Value)
-                            {
-                                _periodStart = _factorFile.FactorFileMinimumDate.Value;
+                            _factorFile = factorFile;
 
-                                OnNumericalPrecisionLimited(
-                                    new NumericalPrecisionLimitedEventArgs(
-                                        $"Data for symbol {_config.Symbol.Value} has been limited due to numerical precision issues in the factor file. " +
-                                        $"The starting date has been set to {_factorFile.FactorFileMinimumDate.Value.ToShortDateString()}."));
+                            // if factor file has minimum date, update start period if before minimum date
+                            if (!_isLiveMode && _factorFile != null && _factorFile.FactorFileMinimumDate.HasValue)
+                            {
+                                if (_periodStart < _factorFile.FactorFileMinimumDate.Value)
+                                {
+                                    _periodStart = _factorFile.FactorFileMinimumDate.Value;
+
+                                    OnNumericalPrecisionLimited(
+                                        new NumericalPrecisionLimitedEventArgs(
+                                            $"Data for symbol {_config.Symbol.Value} has been limited due to numerical precision issues in the factor file. " +
+                                            $"The starting date has been set to {_factorFile.FactorFileMinimumDate.Value.ToShortDateString()}."));
+                                }
                             }
                         }
                     }
@@ -246,22 +253,6 @@ namespace QuantConnect.Lean.Engine.DataFeeds
                 catch (Exception err)
                 {
                     Log.Error(err, "Fetching Price/Map Factors: " + _config.Symbol.ID + ": ");
-                }
-            }
-
-            // load up the map and factor files for underlying of equity option
-            if (!_config.IsCustomData && _config.SecurityType == SecurityType.Option)
-            {
-                try
-                {
-                    var mapFile = _mapFileResolver.ResolveMapFile(_config.Symbol.Underlying.ID.Symbol, _config.Symbol.Underlying.ID.Date);
-
-                    // only take the resolved map file if it has data, otherwise we'll use the empty one we defined above
-                    if (mapFile.Any()) _mapFile = mapFile;
-                }
-                catch (Exception err)
-                {
-                    Log.Error(err, "Map Factors: " + _config.Symbol.ID + ": ");
                 }
             }
 
@@ -297,6 +288,8 @@ namespace QuantConnect.Lean.Engine.DataFeeds
         {
             if (!_initialized)
             {
+                // Late initialization so it is performed in the data feed stack
+                // and not in the algorithm thread
                 Initialize();
             }
 
@@ -373,9 +366,8 @@ namespace QuantConnect.Lean.Engine.DataFeeds
 
                     // if we move past our current 'date' then we need to do daily things, such
                     // as updating factors and symbol mapping
-                    if (instance.EndTime.Date > _tradeableDates.Current)
+                    if (instance.EndTime.ConvertTo(_config.ExchangeTimeZone, _config.DataTimeZone).Date > _tradeableDates.Current)
                     {
-                        var currentPriceScaleFactor = _config.PriceScaleFactor;
                         // this is fairly hacky and could be solved by removing the aux data from this class
                         // the case is with coarse data files which have many daily sized data points for the
                         // same date,
@@ -384,32 +376,6 @@ namespace QuantConnect.Lean.Engine.DataFeeds
                             // this will advance the date enumerator and determine if a new
                             // instance of the subscription enumerator is required
                             _subscriptionFactoryEnumerator = ResolveDataEnumerator(false);
-                        }
-
-                        // TODO: we should be able to remove this `if` once the underlying data
-                        // scale process is performed later in the enumerator stack and in its own
-                        // enumerator.
-                        // with hourly resolution the first bar for the new date is received
-                        // before the price scale factor is updated by ResolveDataEnumerator,
-                        // so we have to 'rescale' prices before emitting the bar
-                        if (currentPriceScaleFactor != _config.PriceScaleFactor)
-                        {
-                            if ((_config.Resolution == Resolution.Hour
-                                || (_config.Resolution == Resolution.Daily
-                                    && instance.EndTime.Date > _tradeableDates.Current))
-                                && (_config.SecurityType == SecurityType.Equity
-                                || _config.SecurityType == SecurityType.Option))
-                            {
-                                var tradeBar = instance as TradeBar;
-                                if (tradeBar != null)
-                                {
-                                    var bar = tradeBar;
-                                    bar.Open = _config.GetNormalizedPrice(GetRawValue(bar.Open, _config.SumOfDividends, currentPriceScaleFactor));
-                                    bar.High = _config.GetNormalizedPrice(GetRawValue(bar.High, _config.SumOfDividends, currentPriceScaleFactor));
-                                    bar.Low = _config.GetNormalizedPrice(GetRawValue(bar.Low, _config.SumOfDividends, currentPriceScaleFactor));
-                                    bar.Close = _config.GetNormalizedPrice(GetRawValue(bar.Close, _config.SumOfDividends, currentPriceScaleFactor));
-                                }
-                            }
                         }
                     }
 
@@ -447,8 +413,7 @@ namespace QuantConnect.Lean.Engine.DataFeeds
                 }
 
                 // fetch the new source, using the data time zone for the date
-                var dateInDataTimeZone = date.ConvertTo(_config.ExchangeTimeZone, _config.DataTimeZone);
-                var newSource = _dataFactory.GetSource(_config, dateInDataTimeZone, _isLiveMode);
+                var newSource = _dataFactory.GetSource(_config, date, _isLiveMode);
 
                 // check if we should create a new subscription factory
                 var sourceChanged = _source != newSource && newSource.Source != "";
@@ -574,12 +539,10 @@ namespace QuantConnect.Lean.Engine.DataFeeds
                 }
 
                 // don't do other checks if we haven't gotten data for this date yet
-                if (_previous != null && _previous.EndTime > _tradeableDates.Current)
+                if (_previous != null && _previous.EndTime.ConvertTo(_config.ExchangeTimeZone, _config.DataTimeZone) > _tradeableDates.Current)
                 {
                     continue;
                 }
-
-                UpdateScaleFactors(date);
 
                 // we've passed initial checks,now go get data for this date!
                 return true;
@@ -591,68 +554,12 @@ namespace QuantConnect.Lean.Engine.DataFeeds
         }
 
         /// <summary>
-        /// For backwards adjusted data the price is adjusted by a scale factor which is a combination of splits and dividends.
-        /// This backwards adjusted price is used by default and fed as the current price.
-        /// </summary>
-        /// <param name="date">Current date of the backtest.</param>
-        private void UpdateScaleFactors(DateTime date)
-        {
-            if (_hasScaleFactors)
-            {
-                switch (_config.DataNormalizationMode)
-                {
-                    case DataNormalizationMode.Raw:
-                        return;
-
-                    case DataNormalizationMode.TotalReturn:
-                    case DataNormalizationMode.SplitAdjusted:
-                        _config.PriceScaleFactor = _factorFile.GetSplitFactor(date);
-                        break;
-
-                    case DataNormalizationMode.Adjusted:
-                        _config.PriceScaleFactor = _factorFile.GetPriceScaleFactor(date);
-                        break;
-
-                    default:
-                        throw new ArgumentOutOfRangeException();
-                }
-            }
-        }
-
-        /// <summary>
         /// Reset the IEnumeration
         /// </summary>
         /// <remarks>Not used</remarks>
         public void Reset()
         {
             throw new NotImplementedException("Reset method not implemented. Assumes loop will only be used once.");
-        }
-
-        /// <summary>
-        /// Un-normalizes a price
-        /// </summary>
-        private decimal GetRawValue(decimal price, decimal sumOfDividends, decimal priceScaleFactor)
-        {
-            switch (_config.DataNormalizationMode)
-            {
-                case DataNormalizationMode.Raw:
-                    break;
-
-                case DataNormalizationMode.SplitAdjusted:
-                case DataNormalizationMode.Adjusted:
-                    // we need to 'unscale' the price
-                    price = price / priceScaleFactor;
-                    break;
-
-                case DataNormalizationMode.TotalReturn:
-                    // we need to remove the dividends since we've been accumulating them in the price
-                    price = (price - sumOfDividends) / priceScaleFactor;
-                    break;
-
-                default:
-                    throw new ArgumentOutOfRangeException();
-            }
-            return price;
         }
 
         /// <summary>

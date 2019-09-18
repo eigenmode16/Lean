@@ -13,7 +13,6 @@
  * limitations under the License.
 */
 
-using System;
 using QuantConnect.Securities;
 
 namespace QuantConnect.Orders.Fees
@@ -35,7 +34,8 @@ namespace QuantConnect.Orders.Fees
     }
 
     /// <summary>
-    /// Provide extension method for <see cref="IFeeModel"/> to enable backwards compatibility of invocations
+    /// Provide extension method for <see cref="IFeeModel"/> to enable
+    /// backwards compatibility of invocations.
     /// </summary>
     public static class FeeModelExtensions
     {
@@ -52,11 +52,6 @@ namespace QuantConnect.Orders.Fees
             var parameters = new OrderFeeParameters(security, order);
             var fee = model.GetOrderFee(parameters);
 
-            if (fee.Value.Currency != security.QuoteCurrency.AccountCurrency)
-            {
-                throw new InvalidOperationException("The GetOrderFee extension method is only valid" +
-                    " for fee models returning fees in the account currency");
-            }
             return fee.Value.Amount;
         }
     }

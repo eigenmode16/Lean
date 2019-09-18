@@ -26,7 +26,6 @@ using QuantConnect.Securities;
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using QuantConnect.Tests.Common.Securities;
 using QuantConnect.Tests.ToolBox;
 using QuantConnect.ToolBox;
 using QuantConnect.Util;
@@ -357,7 +356,7 @@ namespace QuantConnect.Tests.Engine.DataFeeds
                 .Range(0, 10)
                 .Select(i =>
                 {
-                    var line = $"{DateTime.UtcNow.AddDays(i).ToString(format)},{i + 101},{i + 102},{i + 100},{i + 101},{i + 101}";
+                    var line = $"{DateTime.UtcNow.AddDays(i).ToStringInvariant(format)},{i + 101},{i + 102},{i + 100},{i + 101},{i + 101}";
                     return custom.Reader(config, line, DateTime.UtcNow.AddDays(i), false);
                 })
                 .ToArray();
@@ -506,8 +505,8 @@ namespace QuantConnect.Tests.Engine.DataFeeds
             return new Security(
                 SecurityExchangeHours.AlwaysOpen(TimeZones.Utc),
                 subscriptionDataConfig,
-                new Cash(CashBook.AccountCurrency, 0, 1m),
-                SymbolProperties.GetDefault(CashBook.AccountCurrency),
+                new Cash(Currencies.USD, 0, 1m),
+                SymbolProperties.GetDefault(Currencies.USD),
                 ErrorCurrencyConverter.Instance
             );
         }

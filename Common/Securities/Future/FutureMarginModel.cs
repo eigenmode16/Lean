@@ -78,12 +78,17 @@ namespace QuantConnect.Securities.Future
         {
             //Get the order value from the non-abstract order classes (MarketOrder, LimitOrder, StopMarketOrder)
             //Market order is approximated from the current security price and set in the MarketOrder Method in QCAlgorithm.
-            var orderFees = parameters.Security.FeeModel.GetOrderFee(
-                new OrderFeeParameters(parameters.Security, parameters.Order));
+
+            var fees = parameters.Security.FeeModel.GetOrderFee(
+                new OrderFeeParameters(parameters.Security,
+                    parameters.Order)).Value;
+            var feesInAccountCurrency = parameters.CurrencyConverter.
+                ConvertToAccountCurrency(fees).Amount;
+
             var value = parameters.Order.GetValue(parameters.Security);
             var orderValue = value * GetInitialMarginRequirement(parameters.Security, value);
 
-            return orderValue + Math.Sign(orderValue) * orderFees.Value.Amount;
+            return orderValue + Math.Sign(orderValue) * feesInAccountCurrency;
         }
 
         /// <summary>
@@ -225,7 +230,7 @@ namespace QuantConnect.Securities.Future
             {
                 var directory = Path.Combine(Globals.DataFolder,
                                             symbol.SecurityType.ToLower(),
-                                            symbol.ID.Market.ToLower(),
+                                            symbol.ID.Market.ToLowerInvariant(),
                                             "margins");
                 return FromCsvFile(Path.Combine(directory, symbol.ID.Symbol + ".csv"));
             }
@@ -240,7 +245,7 @@ namespace QuantConnect.Securities.Future
         {
             if (!File.Exists(file))
             {
-                Log.Trace("Unable to locate future margin requirements file. Defaulting to zero margin for this symbol. File: {0}" , file);
+                Log.Trace($"Unable to locate future margin requirements file. Defaulting to zero margin for this symbol. File: {file}");
 
                 return new[] {
                                 new MarginRequirementsEntry
@@ -272,21 +277,21 @@ namespace QuantConnect.Securities.Future
 
             if(!DateTime.TryParseExact(line[0], DateFormat.EightCharacter, CultureInfo.InvariantCulture, DateTimeStyles.None, out date))
             {
-                Log.Trace("Couldn't parse date/time while reading future margin requirement file. Date {0}. Line: {1}", line[0], csvLine);
+                Log.Trace($"Couldn't parse date/time while reading future margin requirement file. Date {line[0]}. Line: {csvLine}");
             }
 
             var initial = 0m;
 
             if (!decimal.TryParse(line[1], out initial))
             {
-                Log.Trace("Couldn't parse Initial margin requirements while reading future margin requirement file. Date {0}. Line: {1}", line[1], csvLine);
+                Log.Trace($"Couldn't parse Initial margin requirements while reading future margin requirement file. Date {line[1]}. Line: {csvLine}");
             }
 
             var maintenance = 0m;
 
             if (!decimal.TryParse(line[2], out maintenance))
             {
-                Log.Trace("Couldn't parse Maintenance margin requirements while reading future margin requirement file. Date {0}. Line: {1}", line[2], csvLine);
+                Log.Trace($"Couldn't parse Maintenance margin requirements while reading future margin requirement file. Date {line[2]}. Line: {csvLine}");
             }
 
             return new MarginRequirementsEntry()

@@ -19,11 +19,11 @@ using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Text;
 using QuantConnect.Data.Market;
 using QuantConnect.Logging;
 using QuantConnect.Securities;
 using QuantConnect.Util;
+using static QuantConnect.StringExtensions;
 
 namespace QuantConnect.Data.Auxiliary
 {
@@ -32,6 +32,11 @@ namespace QuantConnect.Data.Auxiliary
     /// </summary>
     public class FactorFile : IEnumerable<FactorFileRow>
     {
+        /// <summary>
+        /// Keeping a reversed version is more performant that reversing it each time we need it
+        /// </summary>
+        private readonly List<DateTime> _reversedFactorFileDates;
+
         /// <summary>
         /// The factor file data rows sorted by date
         /// </summary>
@@ -52,8 +57,8 @@ namespace QuantConnect.Data.Auxiliary
         /// <summary>
         /// Gets the most recent factor change in the factor file
         /// </summary>
-        public DateTime MostRecentFactorChange => SortedFactorFileData.Reverse()
-            .FirstOrDefault(kvp => kvp.Key != Time.EndOfTime).Key;
+        public DateTime MostRecentFactorChange => _reversedFactorFileDates
+            .FirstOrDefault(time => time != Time.EndOfTime);
 
         /// <summary>
         /// Gets the symbol this factor file represents
@@ -65,20 +70,26 @@ namespace QuantConnect.Data.Auxiliary
         /// </summary>
         public FactorFile(string permtick, IEnumerable<FactorFileRow> data, DateTime? factorFileMinimumDate = null)
         {
-            Permtick = permtick.ToUpper();
+            Permtick = permtick.LazyToUpper();
 
             var dictionary = new Dictionary<DateTime, FactorFileRow>();
             foreach (var row in data)
             {
                 if (dictionary.ContainsKey(row.Date))
                 {
-                    Log.Trace($"Skipping duplicate factor file row for symbol: {permtick}, date: {row.Date:yyyyMMdd}");
+                    Log.Trace(Invariant($"Skipping duplicate factor file row for symbol: {permtick}, date: {row.Date:yyyyMMdd}"));
                     continue;
                 }
 
                 dictionary.Add(row.Date, row);
             }
             SortedFactorFileData = new SortedList<DateTime, FactorFileRow>(dictionary);
+
+            _reversedFactorFileDates = new List<DateTime>();
+            foreach (var time in SortedFactorFileData.Keys.Reverse())
+            {
+                _reversedFactorFileDates.Add(time);
+            }
 
             FactorFileMinimumDate = factorFileMinimumDate;
         }
@@ -108,7 +119,7 @@ namespace QuantConnect.Data.Auxiliary
         {
             decimal factor = 1;
             //Iterate backwards to find the most recent factor:
-            foreach (var splitDate in SortedFactorFileData.Keys.Reverse())
+            foreach (var splitDate in _reversedFactorFileDates)
             {
                 if (splitDate.Date < searchDate.Date) break;
                 factor = SortedFactorFileData[splitDate].PriceScaleFactor;
@@ -123,7 +134,7 @@ namespace QuantConnect.Data.Auxiliary
         {
             decimal factor = 1;
             //Iterate backwards to find the most recent factor:
-            foreach (var splitDate in SortedFactorFileData.Keys.Reverse())
+            foreach (var splitDate in _reversedFactorFileDates)
             {
                 if (splitDate.Date < searchDate.Date) break;
                 factor = SortedFactorFileData[splitDate].SplitFactor;
@@ -139,7 +150,7 @@ namespace QuantConnect.Data.Auxiliary
             var factors = new FactorFileRow(searchDate, 1m, 1m, 0m);
 
             // Iterate backwards to find the most recent factors
-            foreach (var splitDate in SortedFactorFileData.Keys.Reverse())
+            foreach (var splitDate in _reversedFactorFileDates)
             {
                 if (splitDate.Date < searchDate.Date) break;
                 factors = SortedFactorFileData[splitDate];
@@ -154,12 +165,12 @@ namespace QuantConnect.Data.Auxiliary
         public static bool HasScalingFactors(string permtick, string market)
         {
             // check for factor files
-            var path = Path.Combine(Globals.DataFolder, "equity", market, "factor_files", permtick.ToLower() + ".csv");
+            var path = Path.Combine(Globals.DataFolder, "equity", market, "factor_files", permtick.ToLowerInvariant() + ".csv");
             if (File.Exists(path))
             {
                 return true;
             }
-            Log.Trace("FactorFile.HasScalingFactors(): Factor file not found: " + permtick);
+            Log.Trace($"FactorFile.HasScalingFactors(): Factor file not found: {permtick}");
             return false;
         }
 
@@ -232,15 +243,9 @@ namespace QuantConnect.Data.Auxiliary
         /// <returns>An enumerable of lines representing this factor file</returns>
         public IEnumerable<string> ToCsvLines()
         {
-            if (FactorFileMinimumDate != null)
-            {
-                var min = SortedFactorFileData.First().Value;
-                yield return $"{FactorFileMinimumDate:yyyyMMdd},{min.PriceFactor},{min.SplitFactor}";
-            }
-
             foreach (var kvp in SortedFactorFileData)
             {
-                yield return $"{kvp.Key:yyyyMMdd},{kvp.Value.PriceFactor},{kvp.Value.SplitFactor}";
+                yield return kvp.Value.ToCsv();
             }
         }
 

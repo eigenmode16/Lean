@@ -18,6 +18,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using QuantConnect.Securities;
+using static QuantConnect.StringExtensions;
 
 namespace QuantConnect.Orders
 {
@@ -43,6 +44,7 @@ namespace QuantConnect.Orders
         private readonly SubmitOrderRequest _submitRequest;
         private readonly ManualResetEvent _orderStatusClosedEvent;
         private readonly List<UpdateOrderRequest> _updateRequests;
+        private readonly ManualResetEvent _orderSetEvent;
 
         // we pull this in to provide some behavior/simplicity to the ticket API
         private readonly SecurityTransactionManager _transactionManager;
@@ -194,6 +196,16 @@ namespace QuantConnect.Orders
         }
 
         /// <summary>
+        /// Returns true if the order has been set for this ticket
+        /// </summary>
+        public bool HasOrder => _order != null;
+
+        /// <summary>
+        /// Gets a wait handle that can be used to wait until the order has been set
+        /// </summary>
+        public WaitHandle OrderSet => _orderSetEvent;
+
+        /// <summary>
         /// Initializes a new instance of the <see cref="OrderTicket"/> class
         /// </summary>
         /// <param name="transactionManager">The transaction manager used for submitting updates and cancels for this ticket</param>
@@ -207,6 +219,7 @@ namespace QuantConnect.Orders
             _orderEvents = new List<OrderEvent>();
             _updateRequests = new List<UpdateOrderRequest>();
             _orderStatusClosedEvent = new ManualResetEvent(false);
+            _orderSetEvent = new ManualResetEvent(false);
         }
 
         /// <summary>
@@ -242,9 +255,10 @@ namespace QuantConnect.Orders
                     break;
 
                 default:
-                    throw new ArgumentOutOfRangeException("field", field, null);
+                    throw new ArgumentOutOfRangeException(nameof(field), field, null);
             }
-            throw new ArgumentException("Unable to get field " + field + " on order of type " + _submitRequest.OrderType);
+
+            throw new ArgumentException(Invariant($"Unable to get field {field} on order of type {_submitRequest.OrderType}"));
         }
 
         /// <summary>
@@ -270,7 +284,9 @@ namespace QuantConnect.Orders
                 // don't submit duplicate cancel requests
                 if (_cancelRequest != null)
                 {
-                    return OrderResponse.Error(request, OrderResponseErrorCode.RequestCanceled, $"Order {OrderId} has already received a cancellation request.");
+                    return OrderResponse.Error(request, OrderResponseErrorCode.RequestCanceled,
+                        Invariant($"Order {OrderId} has already received a cancellation request.")
+                    );
                 }
             }
 
@@ -332,7 +348,8 @@ namespace QuantConnect.Orders
                     // keep running totals of quantity filled and the average fill price so we
                     // don't need to compute these on demand
                     _quantityFilled += orderEvent.FillQuantity;
-                    var quantityWeightedFillPrice = _orderEvents.Where(x => x.Status.IsFill()).Sum(x => x.AbsoluteFillQuantity*x.FillPrice);
+                    var quantityWeightedFillPrice = _orderEvents.Where(x => x.Status.IsFill())
+                        .Aggregate(0m, (d, x) => d + x.AbsoluteFillQuantity*x.FillPrice);
                     _averageFillPrice = quantityWeightedFillPrice/Math.Abs(_quantityFilled);
                 }
             }
@@ -356,6 +373,8 @@ namespace QuantConnect.Orders
             }
 
             _order = order;
+
+            _orderSetEvent.Set();
         }
 
         /// <summary>
@@ -461,12 +480,13 @@ namespace QuantConnect.Orders
         /// <filterpriority>2</filterpriority>
         public override string ToString()
         {
-            var counts = "Request Count: " + RequestCount() + " Response Count: " + ResponseCount();
+            var counts = Invariant($"Request Count: {RequestCount()} Response Count: {ResponseCount()}");
             if (_order != null)
             {
-                return OrderId + ": " + _order + " " + counts;
+                return Invariant($"{OrderId}: {_order} {counts}");
             }
-            return OrderId + ": " + counts;
+
+            return Invariant($"{OrderId}: {counts}");
         }
 
         private int ResponseCount()
@@ -523,7 +543,7 @@ namespace QuantConnect.Orders
             {
                 return orderSelector(typedOrder);
             }
-            throw new ArgumentException(string.Format("Unable to access property {0} on order of type {1}", field, order.Type));
+            throw new ArgumentException(Invariant($"Unable to access property {field} on order of type {order.Type}"));
         }
     }
 }

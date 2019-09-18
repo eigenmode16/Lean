@@ -67,6 +67,13 @@ namespace QuantConnect.Scheduling
         /// <summary>
         /// Specifies an event should fire on each of the specified days of week
         /// </summary>
+        /// <param name="day">The day the event shouls fire</param>
+        /// <returns>A date rule that fires on every specified day of week</returns>
+        public IDateRule Every(DayOfWeek day) => Every(new[] { day });
+
+        /// <summary>
+        /// Specifies an event should fire on each of the specified days of week
+        /// </summary>
         /// <param name="days">The days the event shouls fire</param>
         /// <returns>A date rule that fires on every specified day of week</returns>
         public IDateRule Every(params DayOfWeek[] days)
@@ -92,7 +99,7 @@ namespace QuantConnect.Scheduling
         public IDateRule EveryDay(Symbol symbol)
         {
             var security = GetSecurity(symbol);
-            return new FuncDateRule(symbol.Value + ": EveryDay", (start, end) => Time.EachTradeableDay(security, start, end));
+            return new FuncDateRule($"{symbol.Value}: EveryDay", (start, end) => Time.EachTradeableDay(security, start, end));
         }
 
         /// <summary>
@@ -113,7 +120,7 @@ namespace QuantConnect.Scheduling
         /// <returns>A date rule that fires on the first tradeable date for the specified security each month</returns>
         public IDateRule MonthStart(Symbol symbol)
         {
-            return new FuncDateRule(symbol.Value + ": MonthStart", (start, end) => MonthStartIterator(GetSecurity(symbol), start, end));
+            return new FuncDateRule($"{symbol.Value}: MonthStart", (start, end) => MonthStartIterator(GetSecurity(symbol), start, end));
         }
 
         /// <summary>
@@ -134,7 +141,7 @@ namespace QuantConnect.Scheduling
         /// <returns>A date rule that fires on the last tradeable date for the specified security each month</returns>
         public IDateRule MonthEnd(Symbol symbol)
         {
-            return new FuncDateRule(symbol.Value + ": MonthEnd", (start, end) => MonthEndIterator(GetSecurity(symbol), start, end));
+            return new FuncDateRule($"{symbol.Value}: MonthEnd", (start, end) => MonthEndIterator(GetSecurity(symbol), start, end));
         }
 
         /// <summary>
@@ -155,7 +162,7 @@ namespace QuantConnect.Scheduling
         /// <returns>A date rule that fires on the first tradeable date for the specified security each week</returns>
         public IDateRule WeekStart(Symbol symbol)
         {
-            return new FuncDateRule(symbol.Value + ": WeekStart", (start, end) => WeekStartIterator(GetSecurity(symbol), start, end));
+            return new FuncDateRule($"{symbol.Value}: WeekStart", (start, end) => WeekStartIterator(GetSecurity(symbol), start, end));
         }
 
         /// <summary>
@@ -176,7 +183,7 @@ namespace QuantConnect.Scheduling
         /// <returns>A date rule that fires on the last tradeable date for the specified security each week</returns>
         public IDateRule WeekEnd(Symbol symbol)
         {
-            return new FuncDateRule(symbol.Value + ": WeekEnd", (start, end) => WeekEndIterator(GetSecurity(symbol), start, end));
+            return new FuncDateRule($"{symbol.Value}: WeekEnd", (start, end) => WeekEndIterator(GetSecurity(symbol), start, end));
         }
 
         /// <summary>
@@ -189,7 +196,7 @@ namespace QuantConnect.Scheduling
             Security security;
             if (!_securities.TryGetValue(symbol, out security))
             {
-                throw new Exception(symbol.Value + " not found in portfolio. Request this data when initializing the algorithm.");
+                throw new KeyNotFoundException(symbol.Value + " not found in portfolio. Request this data when initializing the algorithm.");
             }
             return security;
         }

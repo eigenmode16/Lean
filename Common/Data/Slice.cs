@@ -233,7 +233,7 @@ namespace QuantConnect.Data
                 {
                     return value.GetData();
                 }
-                throw new KeyNotFoundException(string.Format("'{0}' wasn't found in the Slice object, likely because there was no-data at this moment in time and it wasn't possible to fillforward historical data. Please check the data exists before accessing it with data.ContainsKey(\"{0}\")", symbol));
+                throw new KeyNotFoundException($"'{symbol}' wasn't found in the Slice object, likely because there was no-data at this moment in time and it wasn't possible to fillforward historical data. Please check the data exists before accessing it with data.ContainsKey(\"{symbol}\")");
             }
         }
 
@@ -251,6 +251,18 @@ namespace QuantConnect.Data
                 if (typeof(T) == typeof(Tick))
                 {
                     dictionary = new Lazy<object>(() => new DataDictionary<T>(_data.Value.Values.SelectMany<dynamic, dynamic>(x => x.GetData()).OfType<T>(), x => x.Symbol));
+                }
+                else if (typeof(T) == typeof(TradeBar))
+                {
+                    dictionary = new Lazy<object>(() => new DataDictionary<TradeBar>(
+                        _data.Value.Values.Where(x => x.TradeBar != null).Select(x => x.TradeBar),
+                        x => x.Symbol));
+                }
+                else if (typeof(T) == typeof(QuoteBar))
+                {
+                    dictionary = new Lazy<object>(() => new DataDictionary<QuoteBar>(
+                        _data.Value.Values.Where(x => x.QuoteBar != null).Select(x => x.QuoteBar),
+                        x => x.Symbol));
                 }
                 else
                 {

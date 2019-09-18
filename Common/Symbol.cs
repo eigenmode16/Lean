@@ -16,6 +16,7 @@
 
 using System;
 using Newtonsoft.Json;
+using static QuantConnect.StringExtensions;
 
 namespace QuantConnect
 {
@@ -35,7 +36,7 @@ namespace QuantConnect
 
         /// <summary>
         /// Provides a convience method for creating a Symbol for most security types.
-        /// This method currently does not support Option, Commodity, and Future
+        /// This method currently does not support Commodities
         /// </summary>
         /// <param name="ticker">The string ticker symbol</param>
         /// <param name="securityType">The security type of the ticker. If securityType == Option, then a canonical symbol is created</param>
@@ -78,7 +79,7 @@ namespace QuantConnect
 
                 case SecurityType.Commodity:
                 default:
-                    throw new NotImplementedException("The security type has not been implemented yet: " + securityType);
+                    throw new NotImplementedException(Invariant($"The security type has not been implemented yet: {securityType}"));
             }
 
             return new Symbol(sid, alias ?? ticker);
@@ -123,7 +124,7 @@ namespace QuantConnect
 
             if (expiry == SecurityIdentifier.DefaultDate)
             {
-                alias = alias ?? "?" + underlyingSymbol.Value.ToUpper();
+                alias = alias ?? "?" + underlyingSymbol.Value.LazyToUpper();
             }
             else
             {
@@ -151,7 +152,7 @@ namespace QuantConnect
 
             if (expiry == SecurityIdentifier.DefaultDate)
             {
-                alias = alias ?? "/" + ticker.ToUpper();
+                alias = alias ?? "/" + ticker.LazyToUpper();
             }
             else
             {
@@ -244,10 +245,11 @@ namespace QuantConnect
         {
             if (value == null)
             {
-                throw new ArgumentNullException("value");
+                throw new ArgumentNullException(nameof(value));
             }
             ID = sid;
-            Value = value.ToUpper();
+
+            Value = value.LazyToUpper();
         }
 
         /// <summary>
@@ -286,10 +288,10 @@ namespace QuantConnect
         {
             if (value == null)
             {
-                throw new ArgumentNullException("value");
+                throw new ArgumentNullException(nameof(value));
             }
             ID = sid;
-            Value = value.ToUpper();
+            Value = value.LazyToUpper();
             Underlying = underlying;
         }
 
@@ -468,13 +470,13 @@ namespace QuantConnect
         [Obsolete("Symbol.Contains is a pass-through for Symbol.Value.Contains")]
         public bool Contains(string value) { return Value.Contains(value); }
         [Obsolete("Symbol.EndsWith is a pass-through for Symbol.Value.EndsWith")]
-        public bool EndsWith(string value) { return Value.EndsWith(value); }
+        public bool EndsWith(string value) { return Value.EndsWithInvariant(value); }
         [Obsolete("Symbol.StartsWith is a pass-through for Symbol.Value.StartsWith")]
-        public bool StartsWith(string value) { return Value.StartsWith(value); }
+        public bool StartsWith(string value) { return Value.StartsWithInvariant(value); }
         [Obsolete("Symbol.ToLower is a pass-through for Symbol.Value.ToLower")]
-        public string ToLower() { return Value.ToLower(); }
+        public string ToLower() { return Value.ToLowerInvariant(); }
         [Obsolete("Symbol.ToUpper is a pass-through for Symbol.Value.ToUpper")]
-        public string ToUpper() { return Value.ToUpper(); }
+        public string ToUpper() { return Value.LazyToUpper(); }
 #pragma warning restore 1591
 
         #endregion

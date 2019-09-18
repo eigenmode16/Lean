@@ -72,10 +72,11 @@ namespace QuantConnect.Tests.Engine
                     new SecurityService(algo.Portfolio.CashBook, marketHoursDatabase, symbolPropertiesDataBase, algo)),
                 algo,
                 algo.TimeKeeper,
-                marketHoursDatabase);
+                marketHoursDatabase,
+                true);
             algo.SubscriptionManager.SetDataManager(dataManager);
-            var synchronizer = new Synchronizer();
-            synchronizer.Initialize(algo, dataManager, true);
+            var synchronizer = new LiveSynchronizer();
+            synchronizer.Initialize(algo, dataManager);
             _liveTradingDataFeed.Initialize(algo, jobPacket, new LiveTradingResultHandler(), new LocalDiskMapFileProvider(),
                                             null, new DefaultDataProvider(), dataManager, synchronizer);
             algo.Initialize();
@@ -151,7 +152,10 @@ namespace QuantConnect.Tests.Engine
         class TimeZoneOffsetProviderNeverOpen : TimeZoneOffsetProvider
         {
             public TimeZoneOffsetProviderNeverOpen()
-                : base(TimeZones.NewYork, DateTime.Parse("1/1/2016"), DateTime.Parse("1/1/2018"))
+                : base(TimeZones.NewYork,
+                    Parse.DateTime("1/1/2016"),
+                    Parse.DateTime("1/1/2018")
+                )
             {
             }
 
@@ -165,7 +169,10 @@ namespace QuantConnect.Tests.Engine
         class TimeZoneOffsetProviderAlwaysOpen : TimeZoneOffsetProvider
         {
             public TimeZoneOffsetProviderAlwaysOpen()
-                : base(TimeZones.NewYork, DateTime.Parse("1/1/2016"), DateTime.Parse("1/1/2018"))
+                : base(TimeZones.NewYork,
+                    Parse.DateTime("1/1/2016"),
+                    Parse.DateTime("1/1/2018")
+                )
             {
             }
 

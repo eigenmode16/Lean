@@ -32,7 +32,6 @@ using QuantConnect.Lean.Engine.DataFeeds;
 using QuantConnect.Lean.Engine.RealTime;
 using QuantConnect.Lean.Engine.Results;
 using QuantConnect.Lean.Engine.Server;
-using QuantConnect.Lean.Engine.Setup;
 using QuantConnect.Lean.Engine.TransactionHandlers;
 using QuantConnect.Orders;
 using QuantConnect.Packets;
@@ -61,7 +60,8 @@ namespace QuantConnect.Tests.Engine
                     new SecurityService(algorithm.Portfolio.CashBook, marketHoursDatabase, symbolPropertiesDataBase, algorithm)),
                 algorithm,
                 algorithm.TimeKeeper,
-                marketHoursDatabase);
+                marketHoursDatabase,
+                false);
             algorithm.SubscriptionManager.SetDataManager(dataManager);
             var transactions = new BacktestingTransactionHandler();
             var results = new BacktestingResultHandler();
@@ -74,14 +74,14 @@ namespace QuantConnect.Tests.Engine
             algorithm.Initialize();
             algorithm.PostInitialize();
 
-            results.Initialize(job, new QuantConnect.Messaging.Messaging(), new Api.Api(), new BacktestingSetupHandler(), transactions);
-            results.SetAlgorithm(algorithm);
+            results.Initialize(job, new QuantConnect.Messaging.Messaging(), new Api.Api(), transactions);
+            results.SetAlgorithm(algorithm, algorithm.Portfolio.TotalPortfolioValue);
             transactions.Initialize(algorithm, new BacktestingBrokerage(algorithm), results);
             feed.Initialize(algorithm, job, results, null, null, null, dataManager, null);
 
             Log.Trace("Starting algorithm manager loop to process " + nullSynchronizer.Count + " time slices");
             var sw = Stopwatch.StartNew();
-            algorithmManager.Run(job, algorithm, dataManager, nullSynchronizer, transactions, results, realtime, leanManager, alphas, token);
+            algorithmManager.Run(job, algorithm, nullSynchronizer, transactions, results, realtime, leanManager, alphas, token);
             sw.Stop();
 
             var thousands = nullSynchronizer.Count / 1000d;
@@ -155,7 +155,6 @@ namespace QuantConnect.Tests.Engine
             public void Initialize(AlgorithmNodePacket job,
                 IMessagingHandler messagingHandler,
                 IApi api,
-                ISetupHandler setupHandler,
                 ITransactionHandler transactionHandler)
             {
             }
@@ -212,7 +211,7 @@ namespace QuantConnect.Tests.Engine
             {
             }
 
-            public void SetAlgorithm(IAlgorithm algorithm)
+            public void SetAlgorithm(IAlgorithm algorithm, decimal startingPortfolioValue)
             {
             }
 
@@ -224,13 +223,7 @@ namespace QuantConnect.Tests.Engine
             {
             }
 
-            public void SendFinalResult(AlgorithmNodePacket job,
-                Dictionary<int, Order> orders,
-                Dictionary<DateTime, decimal> profitLoss,
-                Dictionary<string, Holding> holdings,
-                CashBook cashbook,
-                StatisticsResults statisticsResults,
-                Dictionary<string, string> banner)
+            public void SendFinalResult()
             {
             }
 
@@ -306,6 +299,10 @@ namespace QuantConnect.Tests.Engine
             public void Exit()
             {
             }
+
+            public void OnSecuritiesChanged(SecurityChanges changes)
+            {
+            }
         }
 
         class NullTransactionHandler : ITransactionHandler
@@ -374,6 +371,8 @@ namespace QuantConnect.Tests.Engine
             {
                 throw new NotImplementedException();
             }
+
+            public event EventHandler<OrderEvent> NewOrderEvent;
         }
 
         class NullSynchronizer : ISynchronizer
@@ -400,8 +399,8 @@ namespace QuantConnect.Tests.Engine
                         EndTime = _frontierUtc.ConvertFromUtc(security.Exchange.TimeZone)
                     };
                     _data.Add(tick);
-                    _securitiesUpdateData.Add(new UpdateData<ISecurityPrice>(security, typeof(Tick), new BaseData[] { tick }));
-                    _consolidatorUpdateData.Add(new UpdateData<SubscriptionDataConfig>(security.Subscriptions.First(), typeof(Tick), new BaseData[] { tick }));
+                    _securitiesUpdateData.Add(new UpdateData<ISecurityPrice>(security, typeof(Tick), new BaseData[] { tick }, false));
+                    _consolidatorUpdateData.Add(new UpdateData<SubscriptionDataConfig>(security.Subscriptions.First(), typeof(Tick), new BaseData[] { tick }, false));
                 }
 
                 _timeSlices.AddRange(GenerateTimeSlices().Take(int.MaxValue / 1000));

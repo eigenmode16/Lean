@@ -15,7 +15,6 @@
 
 using System;
 using System.Collections.Generic;
-using QuantConnect.Algorithm.Framework;
 using QuantConnect.Algorithm.Framework.Alphas;
 using QuantConnect.Algorithm.Framework.Execution;
 using QuantConnect.Algorithm.Framework.Portfolio;
@@ -29,7 +28,7 @@ namespace QuantConnect.Algorithm.CSharp
     /// <summary>
     /// Show cases how to use the <see cref="TrailingStopRiskManagementModel"/>
     /// </summary>
-    public class TrailingStopRiskFrameworkAlgorithm : QCAlgorithmFramework, IRegressionAlgorithmDefinition
+    public class TrailingStopRiskFrameworkAlgorithm : QCAlgorithm, IRegressionAlgorithmDefinition
     {
         /// <summary>
         /// Initialise the data and resolution required, as well as the cash and start-end dates for your algorithm. All algorithms must initialized.
@@ -77,21 +76,21 @@ namespace QuantConnect.Algorithm.CSharp
             {"Total Trades", "5"},
             {"Average Win", "0%"},
             {"Average Loss", "-0.66%"},
-            {"Compounding Annual Return", "232.602%"},
+            {"Compounding Annual Return", "206.994%"},
             {"Drawdown", "2.300%"},
             {"Expectancy", "-1"},
             {"Net Profit", "1.548%"},
-            {"Sharpe Ratio", "4.05"},
+            {"Sharpe Ratio", "3.748"},
             {"Loss Rate", "100%"},
             {"Win Rate", "0%"},
             {"Profit-Loss Ratio", "0"},
-            {"Alpha", "0.007"},
-            {"Beta", "71.017"},
-            {"Annual Standard Deviation", "0.195"},
-            {"Annual Variance", "0.038"},
-            {"Information Ratio", "3.995"},
-            {"Tracking Error", "0.195"},
-            {"Treynor Ratio", "0.011"},
+            {"Alpha", "0.626"},
+            {"Beta", "0.367"},
+            {"Annual Standard Deviation", "0.176"},
+            {"Annual Variance", "0.031"},
+            {"Information Ratio", "2.853"},
+            {"Tracking Error", "0.2"},
+            {"Treynor Ratio", "1.795"},
             {"Total Fees", "$16.28"},
             {"Long/Short Ratio", "100%"}
         };

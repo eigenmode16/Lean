@@ -14,7 +14,6 @@
 */
 
 using System.Collections.Generic;
-using QuantConnect.Algorithm.Framework;
 using QuantConnect.Algorithm.Framework.Alphas;
 using QuantConnect.Algorithm.Framework.Execution;
 using QuantConnect.Algorithm.Framework.Portfolio;
@@ -27,7 +26,7 @@ namespace QuantConnect.Algorithm.CSharp
     /// <summary>
     /// Show cases how to use the <see cref="CompositeAlphaModel"/> to define
     /// </summary>
-    public class CompositeAlphaModelFrameworkAlgorithm : QCAlgorithmFramework, IRegressionAlgorithmDefinition
+    public class CompositeAlphaModelFrameworkAlgorithm : QCAlgorithm, IRegressionAlgorithmDefinition
     {
         public override void Initialize()
         {
@@ -75,21 +74,21 @@ namespace QuantConnect.Algorithm.CSharp
             {"Total Trades", "7"},
             {"Average Win", "0.01%"},
             {"Average Loss", "-0.38%"},
-            {"Compounding Annual Return", "1192.794%"},
+            {"Compounding Annual Return", "990.002%"},
             {"Drawdown", "1.700%"},
             {"Expectancy", "-0.323"},
             {"Net Profit", "3.326%"},
-            {"Sharpe Ratio", "6.635"},
+            {"Sharpe Ratio", "6.072"},
             {"Loss Rate", "33%"},
             {"Win Rate", "67%"},
             {"Profit-Loss Ratio", "0.01"},
-            {"Alpha", "0"},
-            {"Beta", "152.178"},
-            {"Annual Standard Deviation", "0.253"},
-            {"Annual Variance", "0.064"},
-            {"Information Ratio", "6.594"},
-            {"Tracking Error", "0.253"},
-            {"Treynor Ratio", "0.011"},
+            {"Alpha", "1.391"},
+            {"Beta", "0.106"},
+            {"Annual Standard Deviation", "0.231"},
+            {"Annual Variance", "0.053"},
+            {"Information Ratio", "4.638"},
+            {"Tracking Error", "0.283"},
+            {"Treynor Ratio", "13.173"},
             {"Total Fees", "$67.00"},
             {"Total Insights Generated", "2"},
             {"Total Insights Closed", "0"},

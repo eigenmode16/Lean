@@ -15,7 +15,6 @@
 
 using System;
 using System.Collections.Generic;
-using System.Globalization;
 using System.Linq;
 using Newtonsoft.Json;
 using NUnit.Framework;
@@ -301,9 +300,25 @@ namespace QuantConnect.Tests.Common.Util
         }
 
         [Test]
+        public void ConvertsInt32FromStringWithDecimalTruncation()
+        {
+            const string input = "12345678.9";
+            var value = input.ToInt32();
+            Assert.AreEqual(12345678, value);
+        }
+
+        [Test]
         public void ConvertsInt64FromString()
         {
             const string input = "12345678900";
+            var value = input.ToInt64();
+            Assert.AreEqual(12345678900, value);
+        }
+
+        [Test]
+        public void ConvertsInt64FromStringWithDecimalTruncation()
+        {
+            const string input = "12345678900.12";
             var value = input.ToInt64();
             Assert.AreEqual(12345678900, value);
         }
@@ -483,7 +498,7 @@ namespace QuantConnect.Tests.Common.Util
         public void NormalizeDecimalReturnsNoTrailingZeros(decimal input, string expectedOutput)
         {
             var output = input.Normalize();
-            Assert.AreEqual(expectedOutput, output.ToString(CultureInfo.InvariantCulture));
+            Assert.AreEqual(expectedOutput, output.ToStringInvariant());
         }
 
         [Test]
@@ -644,14 +659,14 @@ namespace QuantConnect.Tests.Common.Util
 
             var coarse = Enumerable
                 .Range(0, 9)
-                .Select(x => new CoarseFundamental { Symbol = Symbol.Create(x.ToString(), SecurityType.Equity, Market.USA), Value = x });
+                .Select(x => new CoarseFundamental { Symbol = Symbol.Create(x.ToStringInvariant(), SecurityType.Equity, Market.USA), Value = x });
 
             var symbols = coarseSelector(coarse);
 
             Assert.AreEqual(5, symbols.Length);
             foreach (var symbol in symbols)
             {
-                var price = Convert.ToInt32(symbol.Value);
+                var price = symbol.Value.ConvertInvariant<int>();
                 Assert.AreEqual(0, price % 2);
             }
         }
@@ -700,7 +715,7 @@ namespace QuantConnect.Tests.Common.Util
             }
             catch (PythonException e)
             {
-                Assert.AreEqual($"ValueError : {6}", e.Message);
+                Assert.AreEqual("ValueError : 6.0", e.Message);
             }
         }
 
@@ -715,6 +730,69 @@ namespace QuantConnect.Tests.Common.Util
                 PythonEngine.Exec("def raise_number(a, b): raise ValueError(a * b)", null, locals.Handle);
                 var pyObject = locals.GetItem("raise_number");
                 Assert.Throws<ArgumentException>(() => pyObject.TryConvertToDelegate(out action));
+            }
+        }
+
+        [Test]
+        public void PyObjectStringConvertToSymbolEnumerable()
+        {
+            SymbolCache.Clear();
+            SymbolCache.Set("SPY", Symbols.SPY);
+
+            IEnumerable<Symbol> symbols;
+            using (Py.GIL())
+            {
+                symbols = new PyString("SPY").ConvertToSymbolEnumerable();
+            }
+
+            Assert.AreEqual(Symbols.SPY, symbols.Single());
+        }
+
+        [Test]
+        public void PyObjectStringListConvertToSymbolEnumerable()
+        {
+            SymbolCache.Clear();
+            SymbolCache.Set("SPY", Symbols.SPY);
+
+            IEnumerable<Symbol> symbols;
+            using (Py.GIL())
+            {
+                symbols = new PyList(new[] { "SPY".ToPython() }).ConvertToSymbolEnumerable();
+            }
+
+            Assert.AreEqual(Symbols.SPY, symbols.Single());
+        }
+
+        [Test]
+        public void PyObjectSymbolConvertToSymbolEnumerable()
+        {
+            IEnumerable<Symbol> symbols;
+            using (Py.GIL())
+            {
+                symbols = Symbols.SPY.ToPython().ConvertToSymbolEnumerable();
+            }
+
+            Assert.AreEqual(Symbols.SPY, symbols.Single());
+        }
+
+        [Test]
+        public void PyObjectSymbolListConvertToSymbolEnumerable()
+        {
+            IEnumerable<Symbol> symbols;
+            using (Py.GIL())
+            {
+                symbols = new PyList(new[] {Symbols.SPY.ToPython()}).ConvertToSymbolEnumerable();
+            }
+
+            Assert.AreEqual(Symbols.SPY, symbols.Single());
+        }
+
+        [Test]
+        public void PyObjectNonSymbolObjectConvertToSymbolEnumerable()
+        {
+            using (Py.GIL())
+            {
+                Assert.Throws<ArgumentException>(() => new PyInt(1).ConvertToSymbolEnumerable().ToList());
             }
         }
 
@@ -748,6 +826,13 @@ namespace QuantConnect.Tests.Common.Util
             Assert.AreEqual(order.SecurityType, orderTicket.SecurityType);
         }
 
+        [Test]
+        public void DecimalTruncateTo3DecimalPlaces()
+        {
+            var value = 10.999999m;
+            Assert.AreEqual(10.999m, value.TruncateTo3DecimalPlaces());
+        }
+
         private PyObject ConvertToPyObject(object value)
         {
             using (Py.GIL())
@@ -755,7 +840,6 @@ namespace QuantConnect.Tests.Common.Util
                 return value.ToPython();
             }
         }
-
 
         private class Super<T>
         {

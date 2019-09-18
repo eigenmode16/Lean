@@ -71,7 +71,7 @@ namespace QuantConnect.Tests.Common.Orders.Fees
                 Assert.True(called);
                 Assert.IsNotNull(result);
                 Assert.AreEqual(15, result.Value.Amount);
-                Assert.AreEqual("USD", result.Value.Currency);
+                Assert.AreEqual(Currencies.USD, result.Value.Currency);
             }
         }
 
@@ -90,8 +90,7 @@ namespace QuantConnect.Tests.Common.Orders.Fees
                     "       self.CalledGetOrderFee = False\n" +
                     "   def GetOrderFee(self, parameters):\n" +
                     "       self.CalledGetOrderFee = True\n" +
-                    "       return OrderFee(CashAmount(15, " +
-                    "parameters.Security.QuoteCurrency.AccountCurrency))");
+                    "       return OrderFee(CashAmount(15, \"USD\"))");
 
                 var customFeeModel = module.GetAttr("CustomFeeModel").Invoke();
                 var wrapper = new FeeModelPythonWrapper(customFeeModel);
@@ -106,7 +105,7 @@ namespace QuantConnect.Tests.Common.Orders.Fees
                 Assert.True(called);
                 Assert.IsNotNull(result);
                 Assert.AreEqual(15, result.Value.Amount);
-                Assert.AreEqual("USD", result.Value.Currency);
+                Assert.AreEqual(Currencies.USD, result.Value.Currency);
             }
         }
         #endregion

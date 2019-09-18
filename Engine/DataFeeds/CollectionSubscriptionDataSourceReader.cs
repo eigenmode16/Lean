@@ -18,7 +18,6 @@ using QuantConnect.Data;
 using QuantConnect.Data.UniverseSelection;
 using QuantConnect.Interfaces;
 using QuantConnect.Lean.Engine.DataFeeds.Transport;
-using QuantConnect.Util;
 
 namespace QuantConnect.Lean.Engine.DataFeeds
 {
@@ -48,7 +47,7 @@ namespace QuantConnect.Lean.Engine.DataFeeds
             _date = date;
             _config = config;
             _isLiveMode = isLiveMode;
-            _factory = (BaseData)ObjectActivator.GetActivator(config.Type).Invoke(new object[] { config.Type });
+            _factory = _config.Type.GetBaseDataInstance();
         }
 
         /// <summary>
@@ -100,13 +99,13 @@ namespace QuantConnect.Lean.Engine.DataFeeds
                 var raw = "";
                 while (!reader.EndOfStream)
                 {
-                    BaseDataCollection instances;
+                    BaseDataCollection instances = null;
                     try
                     {
                         raw = reader.ReadLine();
                         var result = _factory.Reader(_config, raw, _date, _isLiveMode);
                         instances = result as BaseDataCollection;
-                        if (instances == null)
+                        if (instances == null && !reader.ShouldBeRateLimited)
                         {
                             OnInvalidSource(source, new Exception("Reader must generate a BaseDataCollection with the FileFormat.Collection"));
                             continue;
@@ -115,10 +114,16 @@ namespace QuantConnect.Lean.Engine.DataFeeds
                     catch (Exception err)
                     {
                         OnReaderError(raw, err);
-                        continue;
+                        if (!reader.ShouldBeRateLimited)
+                        {
+                            continue;
+                        }
                     }
 
-                    if (_isLiveMode)
+                    if (_isLiveMode
+                        // this shouldn't happen, rest reader is the only one to be rate limited
+                        // and in live mode, but just in case...
+                        || instances == null && reader.ShouldBeRateLimited)
                     {
                         yield return instances;
                     }

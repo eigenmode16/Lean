@@ -26,12 +26,12 @@ using System.Reflection;
 namespace QuantConnect.Python
 {
     /// <summary>
-    /// Organizes a list of data to create pandas.DataFrames 
+    /// Organizes a list of data to create pandas.DataFrames
     /// </summary>
     public class PandasData
     {
         private static dynamic _pandas;
-        private readonly static HashSet<string> _baseDataProperties = typeof(BaseData).GetProperties().ToHashSet(x => x.Name.ToLower());
+        private readonly static HashSet<string> _baseDataProperties = typeof(BaseData).GetProperties().ToHashSet(x => x.Name.ToLowerInvariant());
 
         private readonly int _levels;
         private readonly bool _isCustomData;
@@ -97,14 +97,14 @@ namespace QuantConnect.Python
                 {
                     var members = type.GetMembers().Where(x => x.MemberType == MemberTypes.Field || x.MemberType == MemberTypes.Property);
 
-                    var duplicateKeys = members.GroupBy(x => x.Name.ToLower()).Where(x => x.Count() > 1).Select(x => x.Key);
+                    var duplicateKeys = members.GroupBy(x => x.Name.ToLowerInvariant()).Where(x => x.Count() > 1).Select(x => x.Key);
                     foreach (var duplicateKey in duplicateKeys)
                     {
                         throw new ArgumentException($"PandasData.ctor(): More than one \'{duplicateKey}\' member was found in \'{type.FullName}\' class.");
                     }
 
-                    keys = members.Select(x => x.Name.ToLower()).Except(_baseDataProperties).Concat(new[] { "value" });
-                    _members = members.Where(x => keys.Contains(x.Name.ToLower()));
+                    keys = members.Select(x => x.Name.ToLowerInvariant()).Except(_baseDataProperties).Concat(new[] { "value" });
+                    _members = members.Where(x => keys.Contains(x.Name.ToLowerInvariant()));
                 }
 
                 columns.Add("value");
@@ -122,7 +122,7 @@ namespace QuantConnect.Python
         {
             foreach (var member in _members)
             {
-                var key = member.Name.ToLower();
+                var key = member.Name.ToLowerInvariant();
                 var endTime = (baseData as IBaseData).EndTime;
                 AddToSeries(key, endTime, (member as FieldInfo)?.GetValue(baseData));
                 AddToSeries(key, endTime, (member as PropertyInfo)?.GetValue(baseData));
@@ -220,7 +220,7 @@ namespace QuantConnect.Python
         }
 
         /// <summary>
-        /// Get the pandas.DataFrame of the current <see cref="PandasData"/> state 
+        /// Get the pandas.DataFrame of the current <see cref="PandasData"/> state
         /// </summary>
         /// <param name="levels">Number of levels of the multi index</param>
         /// <returns>pandas.DataFrame object</returns>
@@ -263,24 +263,30 @@ namespace QuantConnect.Python
                 var isFalse = x is bool && !(bool)x;
                 return x == null || isNaNOrZero || isNullOrWhiteSpace || isFalse;
             };
-            Func<DateTime, PyTuple> selector = x => 
+            Func<DateTime, PyTuple> selector = x =>
             {
                 list[list.Count - 1] = x.ToPython();
                 return new PyTuple(list.ToArray());
             };
-
+            // creating the pandas MultiIndex is expensive so we keep a cash
+            var indexCache = new Dictionary<List<DateTime>, dynamic>(new ListComparer<DateTime>());
             using (Py.GIL())
             {
                 // Returns a dictionary keyed by column name where values are pandas.Series objects
                 var pyDict = new PyDict();
-
+                var splitNames = names.Split(',');
                 foreach (var kvp in _series)
                 {
                     var values = kvp.Value.Item2;
                     if (values.All(filter)) continue;
 
-                    var tuples = kvp.Value.Item1.Select(selector).ToArray();
-                    var index = _pandas.MultiIndex.from_tuples(tuples, names: names.Split(','));
+                    dynamic index;
+                    if (!indexCache.TryGetValue(kvp.Value.Item1, out index))
+                    {
+                        var tuples = kvp.Value.Item1.Select(selector).ToArray();
+                        index = _pandas.MultiIndex.from_tuples(tuples, names: splitNames);
+                        indexCache[kvp.Value.Item1] = index;
+                    }
 
                     pyDict.SetItem(kvp.Key, _pandas.Series(values, index));
                 }
@@ -303,7 +309,7 @@ namespace QuantConnect.Python
             if (_series.TryGetValue(key, out value))
             {
                 value.Item1.Add(time);
-                value.Item2.Add(input is decimal ? Convert.ToDouble(input) : input);
+                value.Item2.Add(input is decimal ? input.ConvertInvariant<double>() : input);
             }
             else
             {

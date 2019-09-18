@@ -44,8 +44,8 @@ namespace QuantConnect.Tests.Brokerages.Bitfinex
                         false,
                         false
                     ),
-                    new Cash(CashBook.AccountCurrency, 0, 1m),
-                    SymbolProperties.GetDefault(CashBook.AccountCurrency),
+                    new Cash(Currencies.USD, 0, 1m),
+                    SymbolProperties.GetDefault(Currencies.USD),
                     ErrorCurrencyConverter.Instance
                 );
                 security.SetMarketPrice(new Tick(DateTime.UtcNow, Symbol, LowPrice, HighPrice));
@@ -97,7 +97,7 @@ namespace QuantConnect.Tests.Brokerages.Bitfinex
 
             Assert.AreEqual(
                 BitfinexFeeModel.MakerFee * price * Math.Abs(Quantity), fee.Value.Amount);
-            Assert.AreEqual("USD", fee.Value.Currency);
+            Assert.AreEqual(Currencies.USD, fee.Value.Currency);
         }
 
         [Test]
@@ -113,7 +113,7 @@ namespace QuantConnect.Tests.Brokerages.Bitfinex
 
             Assert.AreEqual(
                 BitfinexFeeModel.TakerFee * price * Math.Abs(Quantity), fee.Value.Amount);
-            Assert.AreEqual("USD", fee.Value.Currency);
+            Assert.AreEqual(Currencies.USD, fee.Value.Currency);
         }
 
         [Test]
@@ -129,7 +129,7 @@ namespace QuantConnect.Tests.Brokerages.Bitfinex
 
             Assert.AreEqual(
                 BitfinexFeeModel.MakerFee * price * Math.Abs(Quantity), fee.Value.Amount);
-            Assert.AreEqual("USD", fee.Value.Currency);
+            Assert.AreEqual(Currencies.USD, fee.Value.Currency);
         }
 
         [Test]
@@ -145,7 +145,7 @@ namespace QuantConnect.Tests.Brokerages.Bitfinex
 
             Assert.AreEqual(
                 BitfinexFeeModel.TakerFee * price * Math.Abs(Quantity), fee.Value.Amount);
-            Assert.AreEqual("USD", fee.Value.Currency);
+            Assert.AreEqual(Currencies.USD, fee.Value.Currency);
         }
     }
 }

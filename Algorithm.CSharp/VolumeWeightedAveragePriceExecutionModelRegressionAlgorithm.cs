@@ -15,7 +15,6 @@
 */
 
 using System.Collections.Generic;
-using QuantConnect.Algorithm.Framework;
 using QuantConnect.Algorithm.Framework.Alphas;
 using QuantConnect.Algorithm.Framework.Execution;
 using QuantConnect.Algorithm.Framework.Portfolio;
@@ -30,7 +29,7 @@ namespace QuantConnect.Algorithm.CSharp
     /// This algorithm shows how the execution model works to split up orders and submit them only when
     /// the price is on the favorable side of the intraday VWAP.
     /// </summary>
-    public class VolumeWeightedAveragePriceExecutionModelRegressionAlgorithm : QCAlgorithmFramework, IRegressionAlgorithmDefinition
+    public class VolumeWeightedAveragePriceExecutionModelRegressionAlgorithm : QCAlgorithm, IRegressionAlgorithmDefinition
     {
         public override void Initialize()
         {
@@ -78,21 +77,21 @@ namespace QuantConnect.Algorithm.CSharp
             {"Total Trades", "394"},
             {"Average Win", "0.03%"},
             {"Average Loss", "0.00%"},
-            {"Compounding Annual Return", "608.511%"},
+            {"Compounding Annual Return", "521.809%"},
             {"Drawdown", "1.000%"},
             {"Expectancy", "5.981"},
             {"Net Profit", "2.535%"},
-            {"Sharpe Ratio", "6.099"},
+            {"Sharpe Ratio", "5.597"},
             {"Loss Rate", "35%"},
             {"Win Rate", "65%"},
             {"Profit-Loss Ratio", "9.79"},
-            {"Alpha", "0"},
-            {"Beta", "116.165"},
-            {"Annual Standard Deviation", "0.21"},
-            {"Annual Variance", "0.044"},
-            {"Information Ratio", "6.049"},
-            {"Tracking Error", "0.21"},
-            {"Treynor Ratio", "0.011"},
+            {"Alpha", "1.068"},
+            {"Beta", "0.012"},
+            {"Annual Standard Deviation", "0.191"},
+            {"Annual Variance", "0.036"},
+            {"Information Ratio", "3.713"},
+            {"Tracking Error", "0.264"},
+            {"Treynor Ratio", "89.584"},
             {"Total Fees", "$506.02"},
             {"Total Insights Generated", "5"},
             {"Total Insights Closed", "3"},
@@ -100,7 +99,7 @@ namespace QuantConnect.Algorithm.CSharp
             {"Long Insight Count", "3"},
             {"Short Insight Count", "2"},
             {"Long/Short Ratio", "150.0%"},
-            {"Estimated Monthly Alpha Value", "$799818.3566"},
+            {"Estimated Monthly Alpha Value", "$748217.1723"},
             {"Total Accumulated Estimated Alpha Value", "$128859.6241"},
             {"Mean Population Estimated Insight Value", "$42953.2080"},
             {"Mean Population Direction", "100%"},

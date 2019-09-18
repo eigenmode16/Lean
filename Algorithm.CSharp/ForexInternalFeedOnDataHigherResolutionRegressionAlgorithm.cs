@@ -15,6 +15,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using QuantConnect.Data;
 using QuantConnect.Interfaces;
 
@@ -28,6 +29,7 @@ namespace QuantConnect.Algorithm.CSharp
     {
         private readonly Dictionary<Symbol, int> _dataPointsPerSymbol = new Dictionary<Symbol, int>();
         private bool _added;
+        private Symbol _eurusd;
 
         /// <summary>
         /// Initialise the data and resolution required, as well as the cash and start-end dates for your algorithm. All algorithms must initialized.
@@ -38,6 +40,7 @@ namespace QuantConnect.Algorithm.CSharp
             SetEndDate(2013, 10, 8);
             SetCash(100000);
 
+            _eurusd = QuantConnect.Symbol.Create("EURUSD", SecurityType.Forex, Market.FXCM);
             var eurgbp = AddForex("EURGBP", Resolution.Daily);
             _dataPointsPerSymbol.Add(eurgbp.Symbol, 0);
         }
@@ -48,10 +51,27 @@ namespace QuantConnect.Algorithm.CSharp
         /// <param name="data">Slice object keyed by symbol containing the stock data</param>
         public override void OnData(Slice data)
         {
+            if (_added)
+            {
+                var eurUsdSubscription = SubscriptionManager.SubscriptionDataConfigService
+                    .GetSubscriptionDataConfigs(_eurusd, includeInternalConfigs:true)
+                    .Single();
+                if (eurUsdSubscription.IsInternalFeed)
+                {
+                    throw new Exception("Unexpected internal 'EURUSD' Subscription");
+                }
+            }
             if (!_added)
             {
-                var eurusd = AddForex("EURUSD", Resolution.Hour);
-                _dataPointsPerSymbol.Add(eurusd.Symbol, 0);
+                var eurUsdSubscription = SubscriptionManager.SubscriptionDataConfigService
+                    .GetSubscriptionDataConfigs(_eurusd, includeInternalConfigs: true)
+                    .Single();
+                if (!eurUsdSubscription.IsInternalFeed)
+                {
+                    throw new Exception("Unexpected not internal 'EURUSD' Subscription");
+                }
+                AddForex("EURUSD", Resolution.Hour);
+                _dataPointsPerSymbol.Add(_eurusd, 0);
 
                 _added = true;
             }
@@ -61,7 +81,7 @@ namespace QuantConnect.Algorithm.CSharp
                 var symbol = kvp.Key;
                 _dataPointsPerSymbol[symbol]++;
 
-                Log($"{Time} {symbol.Value} {kvp.Value.Price}");
+                Log($"{Time} {symbol.Value} {kvp.Value.Price} EndTime {kvp.Value.EndTime}");
             }
         }
 
@@ -74,7 +94,7 @@ namespace QuantConnect.Algorithm.CSharp
             var expectedDataPointsPerSymbol = new Dictionary<string, int>
             {
                 { "EURGBP", 3 },
-                { "EURUSD", 24 }
+                { "EURUSD", 47 }
             };
 
             foreach (var kvp in _dataPointsPerSymbol)
@@ -85,7 +105,7 @@ namespace QuantConnect.Algorithm.CSharp
 
                 if (actualDataPoints != expectedDataPointsPerSymbol[symbol.Value])
                 {
-                    throw new Exception($"Data point count mismatch for symbol {symbol.Value}: expected: {expectedDataPointsPerSymbol}, actual: {actualDataPoints}");
+                    throw new Exception($"Data point count mismatch for symbol {symbol.Value}: expected: {expectedDataPointsPerSymbol[symbol.Value]}, actual: {actualDataPoints}");
                 }
             }
         }
