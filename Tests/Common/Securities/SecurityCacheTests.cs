@@ -18,6 +18,7 @@ using System.Collections.Generic;
 using System.Linq;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
+using QuantConnect.Algorithm.CSharp;
 using QuantConnect.Data;
 using QuantConnect.Data.Fundamental;
 using QuantConnect.Data.Market;
@@ -46,10 +47,19 @@ namespace QuantConnect.Tests.Common.Securities
             // Act
             foreach (var quoteBar in quotes)
             {
+                quoteBar.Symbol = Symbols.SPY;
                 securityCache.AddData(quoteBar);
             }
-            // Assert
-            Assert.True(securityCache.GetData().Equals(quotes.Last()));
+
+            var lastData = securityCache.GetData();
+            if (marketDataType == MarketDataType.QuoteBar)
+            {
+                Assert.IsNull(lastData);
+            }
+            else
+            {
+                Assert.True(lastData.Equals(quotes.Last()));
+            }
         }
 
         [Test]
@@ -157,8 +167,70 @@ namespace QuantConnect.Tests.Common.Securities
                 Low = 103,
                 Close = 104,
                 Volume = 105,
-                EndTime = ReferenceTime
+                EndTime = ReferenceTime,
+                Symbol = Symbols.SPY
             });
+        }
+
+        [Test]
+        public void AddDataEquity_OHLC_IgnoresQuoteBar()
+        {
+            var securityCache = new SecurityCache();
+            var quoteBar = new QuoteBar
+            {
+                Bid = new Bar(101, 102, 103, 104),
+                Ask = new Bar(105, 106, 107, 108),
+                LastAskSize = 109,
+                LastBidSize = 110,
+                EndTime = ReferenceTime,
+                Symbol = Symbols.SPY
+            };
+            securityCache.AddData(quoteBar);
+
+            var last = securityCache.GetData();
+            Assert.IsNull(last);
+
+            Assert.AreEqual(0, securityCache.High);
+            Assert.AreEqual(0, securityCache.Close);
+            Assert.AreEqual(0, securityCache.Low);
+            Assert.AreEqual(0, securityCache.Open);
+            Assert.AreEqual(0, securityCache.Volume);
+
+            var actualQuoteBar = securityCache.GetData<QuoteBar>();
+            Assert.IsNotNull(actualQuoteBar);
+            Assert.AreEqual(108, securityCache.AskPrice);
+            Assert.AreEqual(109, securityCache.AskSize);
+            Assert.AreEqual(104, securityCache.BidPrice);
+            Assert.AreEqual(110, securityCache.BidSize);
+
+            var tradeBar = new TradeBar
+            {
+                Open = 101,
+                High = 102,
+                Low = 103,
+                Close = 104,
+                Volume = 105,
+                EndTime = ReferenceTime,
+                Symbol = Symbols.SPY
+            };
+            securityCache.AddData(tradeBar);
+
+            last = securityCache.GetData();
+            Assert.IsNotNull(last);
+
+            var actualTradeBar = securityCache.GetData<TradeBar>();
+            Assert.IsNotNull(actualTradeBar);
+            Assert.AreEqual(102, securityCache.High);
+            Assert.AreEqual(104, securityCache.Close);
+            Assert.AreEqual(103, securityCache.Low);
+            Assert.AreEqual(101, securityCache.Open);
+            Assert.AreEqual(105, securityCache.Volume);
+
+            // quote bar data should still be the same
+            Assert.AreEqual(108, securityCache.AskPrice);
+            Assert.AreEqual(109, securityCache.AskSize);
+            Assert.AreEqual(104, securityCache.BidPrice);
+            Assert.AreEqual(110, securityCache.BidSize);
         }
 
         [Test]
@@ -221,6 +293,22 @@ namespace QuantConnect.Tests.Common.Securities
             Assert.AreEqual(securityCache.BidPrice, 0m);
             Assert.AreEqual(securityCache.AskPrice, 0m);
             Assert.AreEqual(securityCache.Volume, volume);
+        }
+
+        [Test]
+        public void GetAllData_ReturnsListOfData()
+        {
+            var cache = new SecurityCache();
+            cache.StoreData(new []
+            {
+                new CustomDataBitcoinAlgorithm.Bitcoin{Ask = 1m},
+                new CustomDataBitcoinAlgorithm.Bitcoin{Ask = 2m}
+            }, typeof(CustomDataBitcoinAlgorithm.Bitcoin));
+
+            var data = cache.GetAll<CustomDataBitcoinAlgorithm.Bitcoin>().ToList();
+            Assert.AreEqual(2, data.Count);
+            Assert.AreEqual(1m, data[0].Ask);
+            Assert.AreEqual(2m, data[1].Ask);
         }
 
         private void AddDataAndAssertChanges(SecurityCache cache, SecuritySeedData seedType, SecuritySeedData dataType, BaseData data, Dictionary<string, string> cacheToBaseDataPropertyMap = null)

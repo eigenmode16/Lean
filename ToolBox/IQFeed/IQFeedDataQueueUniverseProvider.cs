@@ -34,6 +34,7 @@ namespace QuantConnect.ToolBox.IQFeed
 {
     /// <summary>
     /// Class implements several interfaces to support IQFeed symbol mapping to LEAN and symbol lookup
+    /// Refer to IQFeed symbols guide for more info: http://www.iqfeed.net/symbolguide/index.cfm?symbolguide=guide
     /// </summary>
     public class IQFeedDataQueueUniverseProvider : IDataQueueUniverseProvider, ISymbolMapper
     {
@@ -178,6 +179,16 @@ namespace QuantConnect.ToolBox.IQFeed
             }
 
             return result.Select(x => x.Symbol);
+        }
+
+        /// <summary>
+        /// Returns whether the time can be advanced or not.
+        /// </summary>
+        /// <param name="securityType">The security type</param>
+        /// <returns>true if the time can be advanced</returns>
+        public bool CanAdvanceTime(SecurityType securityType)
+        {
+            return true;
         }
 
         /// <summary>
@@ -364,7 +375,7 @@ namespace QuantConnect.ToolBox.IQFeed
                     case "FUTURE":
 
                         // we are not interested in designated continuous contracts
-                        if (columns[columnSymbol].EndsWith("#"))
+                        if (columns[columnSymbol].EndsWith("#") || columns[columnSymbol].EndsWith("#C"))
                             continue;
 
                         var futuresTicker = columns[columnSymbol].TrimStart(new[] { '@' });
@@ -492,8 +503,8 @@ namespace QuantConnect.ToolBox.IQFeed
                         break;
 
                     case "FUTURE":
-
-                        if (columns[columnSymbol].EndsWith("#"))
+                        // we are not interested in designated continuous contracts
+                        if ( columns[columnSymbol].EndsWith( "#" ) || columns[columnSymbol].EndsWith( "#C" ) )
                         {
                             continue;
                         }

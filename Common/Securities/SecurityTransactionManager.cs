@@ -308,7 +308,7 @@ namespace QuantConnect.Securities
         /// <returns>List of open orders.</returns>
         public List<Order> GetOpenOrders(Symbol symbol)
         {
-            return GetOpenOrders(x => x.Symbol == symbol).ToList();
+            return GetOpenOrders(x => x.Symbol == symbol);
         }
 
         /// <summary>
@@ -335,7 +335,7 @@ namespace QuantConnect.Securities
         /// Get the order by its id
         /// </summary>
         /// <param name="orderId">Order id to fetch</param>
-        /// <returns>The order with the specified id, or null if no match is found</returns>
+        /// <returns>A clone of the order with the specified id, or null if no match is found</returns>
         public Order GetOrderById(int orderId)
         {
             return _orderProcessor.GetOrderById(orderId);

@@ -21,6 +21,7 @@ using Moq;
 using NodaTime;
 using NUnit.Framework;
 using QuantConnect.Algorithm;
+using QuantConnect.Algorithm.CSharp;
 using QuantConnect.Brokerages;
 using QuantConnect.Brokerages.Backtesting;
 using QuantConnect.Data;
@@ -30,6 +31,7 @@ using QuantConnect.Orders;
 using QuantConnect.Securities;
 using QuantConnect.Data.Market;
 using QuantConnect.Interfaces;
+using QuantConnect.Packets;
 using QuantConnect.Tests.Engine.DataFeeds;
 using QuantConnect.Tests.Engine.Setup;
 using QuantConnect.Util;
@@ -137,6 +139,71 @@ namespace QuantConnect.Tests.Engine.BrokerageTransactionHandlerTests
             Assert.IsTrue(orderRequest.Response.IsProcessed);
             Assert.IsTrue(orderRequest.Response.IsError);
             Assert.IsTrue(orderTicket.Status == OrderStatus.Invalid);
+        }
+
+        [Test]
+        public void GetOpenOrderTicketsDoesWorksCorrectly()
+        {
+            //Initializes the transaction handler
+            var transactionHandler = new TestBrokerageTransactionHandler();
+            transactionHandler.Initialize(_algorithm, new BacktestingBrokerage(_algorithm), new BacktestingResultHandler());
+
+            // Creates the order
+            var security = _algorithm.Securities[Ticker];
+            var orderRequest = new SubmitOrderRequest(OrderType.Market, security.Type, security.Symbol, 1000, 0, 0, DateTime.Now, "");
+
+            // Mock the the order processor
+            var orderProcessorMock = new Mock<IOrderProcessor>();
+            orderProcessorMock.Setup(m => m.GetOrderTicket(It.IsAny<int>())).Returns(new OrderTicket(_algorithm.Transactions, orderRequest));
+            _algorithm.Transactions.SetOrderProcessor(orderProcessorMock.Object);
+
+            // Act
+            var orderTicket = transactionHandler.Process(orderRequest);
+            var newTicket = transactionHandler.GetOpenOrderTickets(ticket => ticket.Symbol == security.Symbol).Single();
+            Assert.IsTrue(orderTicket.Status == OrderStatus.New);
+            Assert.AreEqual(newTicket, orderTicket);
+
+            transactionHandler.HandleOrderRequest(orderRequest);
+
+            Assert.IsTrue(orderRequest.Response.IsProcessed);
+            Assert.IsFalse(orderRequest.Response.IsError);
+            Assert.IsTrue(orderTicket.Status == OrderStatus.Submitted);
+
+            var processedTicket = transactionHandler.GetOpenOrderTickets(ticket => ticket.Symbol == security.Symbol).ToList();
+            Assert.IsNotEmpty(processedTicket);
+        }
+
+        [Test]
+        public void GetOpenOrderTicketsDoesNotReturnInvalidatedOrder()
+        {
+            //Initializes the transaction handler
+            var transactionHandler = new TestBrokerageTransactionHandler();
+            transactionHandler.Initialize(_algorithm, new BacktestingBrokerage(_algorithm), new BacktestingResultHandler());
+
+            // Creates the order
+            var security = _algorithm.Securities[Ticker];
+            var orderRequest = new SubmitOrderRequest(OrderType.Market, security.Type, security.Symbol, 600, 0, 0, DateTime.Now, "");
+
+            // Mock the the order processor
+            var orderProcessorMock = new Mock<IOrderProcessor>();
+            orderProcessorMock.Setup(m => m.GetOrderTicket(It.IsAny<int>())).Returns(new OrderTicket(_algorithm.Transactions, orderRequest));
+            _algorithm.Transactions.SetOrderProcessor(orderProcessorMock.Object);
+
+            // Act
+            var orderTicket = transactionHandler.Process(orderRequest);
+            var newTicket = transactionHandler.GetOpenOrderTickets(ticket => ticket.Symbol == security.Symbol).Single();
+            Assert.IsTrue(orderTicket.Status == OrderStatus.New);
+            Assert.AreEqual(newTicket, orderTicket);
+
+            transactionHandler.HandleOrderRequest(orderRequest);
+
+            // 600 after round off becomes 0 -> order is not placed
+            Assert.IsTrue(orderRequest.Response.IsProcessed);
+            Assert.IsTrue(orderRequest.Response.IsError);
+            Assert.IsTrue(orderTicket.Status == OrderStatus.Invalid);
+
+            var processedTicket = transactionHandler.GetOpenOrderTickets(ticket => ticket.Symbol == security.Symbol).ToList();
+            Assert.IsEmpty(processedTicket);
         }
 
         [Test]
@@ -292,7 +359,7 @@ namespace QuantConnect.Tests.Engine.BrokerageTransactionHandlerTests
 
             // Sets the Security
 
-            var security = algo.AddSecurity(SecurityType.Crypto, "BTCUSD", Resolution.Hour, Market.GDAX, false, 3.3m, true);
+            var security = algo.AddSecurity(SecurityType.Crypto, "BTCUSD", Resolution.Hour, Market.GDAX, false, 1m, true);
 
             //Initializes the transaction handler
             var transactionHandler = new TestBrokerageTransactionHandler();
@@ -303,7 +370,7 @@ namespace QuantConnect.Tests.Engine.BrokerageTransactionHandlerTests
             var order = Order.CreateOrder(orderRequest);
             var actual = transactionHandler.RoundOffOrder(order, security);
 
-            Assert.AreEqual(123.12345678m, actual);
+            Assert.AreEqual(123.123m, actual);
         }
 
         [Test]
@@ -316,7 +383,7 @@ namespace QuantConnect.Tests.Engine.BrokerageTransactionHandlerTests
 
             // Sets the Security
 
-            var security = algo.AddSecurity(SecurityType.Crypto, "BTCUSD", Resolution.Hour, Market.GDAX, false, 3.3m, true);
+            var security = algo.AddSecurity(SecurityType.Crypto, "BTCUSD", Resolution.Hour, Market.GDAX, false, 1m, true);
 
             //Initializes the transaction handler
             var transactionHandler = new TestBrokerageTransactionHandler();
@@ -327,7 +394,7 @@ namespace QuantConnect.Tests.Engine.BrokerageTransactionHandlerTests
             var order = Order.CreateOrder(orderRequest);
             var actual = transactionHandler.RoundOffOrder(order, security);
 
-            Assert.AreEqual(-123.12345678m, actual);
+            Assert.AreEqual(-123.123m, actual);
         }
 
         [Test]
@@ -340,7 +407,7 @@ namespace QuantConnect.Tests.Engine.BrokerageTransactionHandlerTests
 
             // Sets the Security
 
-            var security = algo.AddSecurity(SecurityType.Crypto, "BTCUSD", Resolution.Hour, Market.GDAX, false, 3.3m, true);
+            var security = algo.AddSecurity(SecurityType.Crypto, "BTCUSD", Resolution.Hour, Market.GDAX, false, 1m, true);
 
             //Initializes the transaction handler
             var transactionHandler = new TestBrokerageTransactionHandler();
@@ -424,14 +491,15 @@ namespace QuantConnect.Tests.Engine.BrokerageTransactionHandlerTests
             transactionHandler.Process(updateRequest);
             Assert.AreEqual(updateRequest.Status, OrderRequestStatus.Processing);
             Assert.IsTrue(updateRequest.Response.IsSuccess);
-            Assert.AreEqual(orderTicket.Status, OrderStatus.Submitted);
+            Assert.AreEqual(OrderStatus.Submitted, orderTicket.Status);
 
             transactionHandler.HandleOrderRequest(updateRequest);
             Assert.IsTrue(updateRequest.Response.IsSuccess);
-            Assert.AreEqual(orderTicket.Status, OrderStatus.Submitted);
+            Assert.AreEqual(OrderStatus.UpdateSubmitted, orderTicket.Status);
 
             Assert.AreEqual(_algorithm.OrderEvents.Count, 2);
-            Assert.IsTrue(_algorithm.OrderEvents.TrueForAll(orderEvent => orderEvent.Status == OrderStatus.Submitted));
+            Assert.IsTrue(_algorithm.OrderEvents[0].Status == OrderStatus.Submitted);
+            Assert.IsTrue(_algorithm.OrderEvents[1].Status == OrderStatus.UpdateSubmitted);
         }
 
         [Test]
@@ -897,7 +965,7 @@ namespace QuantConnect.Tests.Engine.BrokerageTransactionHandlerTests
             var algorithm = new QCAlgorithm();
             var marketHoursDatabase = MarketHoursDatabase.FromDataFolder();
             var symbolPropertiesDataBase = SymbolPropertiesDatabase.FromDataFolder();
-            var securityService = new SecurityService(algorithm.Portfolio.CashBook, marketHoursDatabase, symbolPropertiesDataBase, algorithm);
+            var securityService = new SecurityService(algorithm.Portfolio.CashBook, marketHoursDatabase, symbolPropertiesDataBase, algorithm, RegisteredSecurityDataTypesProvider.Null, new SecurityCacheProvider(algorithm.Portfolio));
             algorithm.Securities.SetSecurityService(securityService);
             algorithm.SetLiveMode(true);
 
@@ -983,6 +1051,59 @@ namespace QuantConnect.Tests.Engine.BrokerageTransactionHandlerTests
             var order = transactionHandler.GetOrderById(orderTicket.OrderId);
             Assert.IsTrue(order.Tag.Contains("TestTag"));
             Assert.IsTrue(order.Tag.Contains("Warning: fill at stale price"));
+        }
+
+        [Test]
+        public void IncrementalOrderId()
+        {
+            var parameter = new RegressionTests.AlgorithmStatisticsTestParameters(nameof(TestIncrementalOrderIdAlgorithm),
+                new Dictionary<string, string>(),
+                Language.CSharp,
+                AlgorithmStatus.Completed);
+
+            AlgorithmRunner.RunLocalBacktest(parameter.Algorithm,
+                parameter.Statistics,
+                parameter.AlphaStatistics,
+                parameter.Language,
+                parameter.ExpectedFinalStatus,
+                setupHandler: "TestIncrementalOrderIdSetupHandler");
+
+            Assert.AreEqual(10, TestIncrementalOrderIdAlgorithm.OrderEventIds.Count);
+        }
+
+        internal class TestIncrementalOrderIdAlgorithm : OrderTicketDemoAlgorithm
+        {
+            public static readonly Dictionary<int, int> OrderEventIds = new Dictionary<int, int>();
+
+            public override void OnOrderEvent(OrderEvent orderEvent)
+            {
+                if (!OrderEventIds.ContainsKey(orderEvent.OrderId))
+                {
+                    OrderEventIds[orderEvent.OrderId] = orderEvent.Id;
+                    if (orderEvent.Id != 1)
+                    {
+                        throw new Exception("Expected first order event to have id 1");
+                    }
+                }
+                else
+                {
+                    var previous = OrderEventIds[orderEvent.OrderId];
+                    if (orderEvent.Id != (previous + 1))
+                    {
+                        throw new Exception("Expected incremental order event ids");
+                    }
+
+                    OrderEventIds[orderEvent.OrderId] = orderEvent.Id;
+                }
+            }
+        }
+
+        internal class TestIncrementalOrderIdSetupHandler : AlgorithmRunner.RegressionSetupHandlerWrapper
+        {
+            public override IAlgorithm CreateAlgorithmInstance(AlgorithmNodePacket algorithmNodePacket, string assemblyPath)
+            {
+                return Algorithm = new TestIncrementalOrderIdAlgorithm();
+            }
         }
 
         internal class EmptyHistoryProvider : HistoryProviderBase

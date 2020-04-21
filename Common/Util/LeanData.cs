@@ -1,4 +1,4 @@
-﻿/*
+/*
  * QUANTCONNECT.COM - Democratizing Finance, Empowering Individuals.
  * Lean Algorithmic Trading Engine v2.0. Copyright 2014 QuantConnect Corporation.
  *
@@ -14,6 +14,7 @@
 */
 
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
@@ -33,6 +34,13 @@ namespace QuantConnect.Util
     /// </summary>
     public static class LeanData
     {
+        /// <summary>
+        /// The different <see cref="SecurityType"/> used for data paths
+        /// </summary>
+        /// <remarks>This includes 'alternative'</remarks>
+        public static IReadOnlyList<string> SecurityTypeAsDataPath => Enum.GetNames(typeof(SecurityType))
+            .Select(x => x.ToLowerInvariant()).Union(new[] { "alternative" }).ToList();
+
         /// <summary>
         /// Converts the specified base data instance into a lean data file csv line.
         /// This method takes into account the fake that base data instances typically
@@ -516,9 +524,8 @@ namespace QuantConnect.Util
 
                 case SecurityType.Future:
                     var expiryDate = symbol.ID.Date;
-                    var contractYearMonth = FuturesExpiryUtilityFunctions.ExpiresInPreviousMonth(symbol.ID.Symbol)
-                        ? expiryDate.AddMonths(1).ToStringInvariant(DateFormat.YearMonth)
-                        : expiryDate.ToStringInvariant(DateFormat.YearMonth);
+                    var monthsToAdd = FuturesExpiryUtilityFunctions.ExpiresInPreviousMonth(symbol.ID.Symbol); 
+                    var contractYearMonth = expiryDate.AddMonths(monthsToAdd).ToStringInvariant(DateFormat.YearMonth);
 
                     if (isHourOrDaily)
                     {
@@ -760,13 +767,30 @@ namespace QuantConnect.Util
             }
             if (type == typeof(Tick))
             {
-                if (securityType == SecurityType.Forex || securityType == SecurityType.Cfd || securityType == SecurityType.Crypto)
+                if (securityType == SecurityType.Forex || 
+                    securityType == SecurityType.Cfd || 
+                    securityType == SecurityType.Crypto)
                 {
                     return TickType.Quote;
                 }
             }
 
             return TickType.Trade;
+        }
+
+        /// <summary>
+        /// Matches a data path security type with the <see cref="SecurityType"/>
+        /// </summary>
+        /// <remarks>This includes 'alternative'</remarks>
+        /// <param name="securityType">The data path security type</param>
+        /// <returns>The matching security type for the given data path</returns>
+        public static SecurityType ParseDataSecurityType(string securityType)
+        {
+            if (securityType.Equals("alternative", StringComparison.InvariantCultureIgnoreCase))
+            {
+                return SecurityType.Base;
+            }
+            return (SecurityType) Enum.Parse(typeof(SecurityType), securityType, true);
         }
 
         /// <summary>
@@ -782,8 +806,7 @@ namespace QuantConnect.Util
             resolution = Resolution.Daily;
             date = default(DateTime);
 
-            var pathSeparators = new[] { '/', '\\'};
-            var securityTypes = Enum.GetNames(typeof(SecurityType)).Select(x => x.ToLowerInvariant()).ToList();
+            var pathSeparators = new[] { '/', '\\' };
 
             try
             {
@@ -800,23 +823,55 @@ namespace QuantConnect.Util
                 var info = fileName.Split(pathSeparators, StringSplitOptions.RemoveEmptyEntries).ToList();
 
                 // find where the useful part of the path starts - i.e. the securityType
-                var startIndex = info.FindIndex(x => securityTypes.Contains(x.ToLowerInvariant()));
+                var startIndex = info.FindIndex(x => SecurityTypeAsDataPath.Contains(x.ToLowerInvariant()));
 
-                // Gather components useed to create the security
-                var market = info[startIndex + 1];
-                var ticker = info[startIndex + 3];
-                resolution = (Resolution)Enum.Parse(typeof(Resolution), info[startIndex + 2], true);
-                var securityType = (SecurityType)Enum.Parse(typeof(SecurityType), info[startIndex], true);
+                var securityType = ParseDataSecurityType(info[startIndex]);
 
-                // If resolution is Daily or Hour, we do not need to set the date and tick type
-                if (resolution < Resolution.Hour)
+                var market = Market.USA;
+                string ticker;
+                if (securityType == SecurityType.Base)
                 {
-                    date = Parse.DateTimeExact(info[startIndex + 4].Substring(0, 8), DateFormat.EightCharacter);
+                    if (!Enum.TryParse(info[startIndex + 2], true, out resolution))
+                    {
+                        resolution = Resolution.Daily;
+                    }
+
+                    // the last part of the path is the file name
+                    var fileNameNoPath = info[info.Count - 1].Split('_').First();
+
+                    if (!DateTime.TryParseExact(fileNameNoPath,
+                        DateFormat.EightCharacter,
+                        DateTimeFormatInfo.InvariantInfo,
+                        DateTimeStyles.None,
+                        out date))
+                    {
+                        // if parsing the date failed we assume filename is ticker
+                        ticker = fileNameNoPath;
+                    }
+                    else
+                    {
+                        // ticker must be the previous part of the path
+                        ticker = info[info.Count - 2];
+                    }
                 }
-
-                if (securityType == SecurityType.Crypto)
+                else
                 {
-                    ticker = ticker.Split('_').First();
+                    resolution = (Resolution)Enum.Parse(typeof(Resolution), info[startIndex + 2], true);
+
+                    // Gather components used to create the security
+                    market = info[startIndex + 1];
+                    ticker = info[startIndex + 3];
+
+                    // If resolution is Daily or Hour, we do not need to set the date and tick type
+                    if (resolution < Resolution.Hour)
+                    {
+                        date = Parse.DateTimeExact(info[startIndex + 4].Substring(0, 8), DateFormat.EightCharacter);
+                    }
+
+                    if (securityType == SecurityType.Crypto)
+                    {
+                        ticker = ticker.Split('_').First();
+                    }
                 }
 
                 symbol = Symbol.Create(ticker, securityType, market);

@@ -20,7 +20,6 @@ using System.Threading;
 using NodaTime;
 using QuantConnect.Brokerages.Alpaca.Markets;
 using QuantConnect.Data;
-using QuantConnect.Data.Market;
 using QuantConnect.Interfaces;
 using QuantConnect.Logging;
 using QuantConnect.Orders;
@@ -45,9 +44,11 @@ namespace QuantConnect.Brokerages.Alpaca
         // Rest API requests must be limited to a maximum of 200 messages/minute
         private readonly RateGate _messagingRateLimiter = new RateGate(200, TimeSpan.FromMinutes(1));
 
-        private readonly RestClient _restClient;
+        private readonly AlpacaTradingClient _alpacaTradingClient;
+        private readonly PolygonDataClient _polygonDataClient;
         private readonly SockClient _sockClient;
-        private readonly NatsClient _natsClient;
+        private readonly PolygonStreamingClient _polygonStreamingClient;
+        private readonly bool _handlesMarketData;
 
         /// <summary>
         /// This lock is used to sync 'PlaceOrder' and callback 'OnTradeUpdate'
@@ -79,31 +80,52 @@ namespace QuantConnect.Brokerages.Alpaca
         /// <param name="accountKeyId">The Alpaca api key id</param>
         /// <param name="secretKey">The api secret key</param>
         /// <param name="tradingMode">The Alpaca trading mode. paper/live</param>
-        public AlpacaBrokerage(IOrderProvider orderProvider, ISecurityProvider securityProvider, string accountKeyId, string secretKey, string tradingMode)
+        /// <param name="handlesMarketData">true if market data subscriptions will be handled by Alpaca</param>
+        public AlpacaBrokerage(IOrderProvider orderProvider, ISecurityProvider securityProvider, string accountKeyId, string secretKey, string tradingMode, bool handlesMarketData)
             : base("Alpaca Brokerage")
         {
-            var baseUrl = "api.alpaca.markets";
-            if (tradingMode.Equals("paper")) baseUrl = "paper-" + baseUrl;
-            baseUrl = "https://" + baseUrl;
+            _handlesMarketData = handlesMarketData;
+
+            var httpScheme = "https://";
+            var alpacaBaseUrl = "api.alpaca.markets";
+
+            if (tradingMode.Equals("paper")) alpacaBaseUrl = "paper-" + alpacaBaseUrl;
+
+            var httpAlpacaBaseUrl = httpScheme + alpacaBaseUrl;
 
             _orderProvider = orderProvider;
             _securityProvider = securityProvider;
 
             _marketHours = MarketHoursDatabase.FromDataFolder();
 
-            // api client for alpaca
-            _restClient = new RestClient(accountKeyId, secretKey, baseUrl);
+            // Alpaca trading client
+            _alpacaTradingClient = new AlpacaTradingClient(new AlpacaTradingClientConfiguration
+            {
+                ApiEndpoint = tradingMode.Equals("paper") ? Environments.Paper.AlpacaTradingApi : Environments.Live.AlpacaTradingApi,
+                SecurityId = new SecretKey(accountKeyId, secretKey)
+            });
+            // api client for alpaca data
+            _polygonDataClient = new PolygonDataClient(new PolygonDataClientConfiguration
+            {
+                ApiEndpoint = Environments.Live.PolygonDataApi,
+                KeyId = accountKeyId
+            });
 
             // websocket client for alpaca
-            _sockClient = new SockClient(accountKeyId, secretKey, baseUrl);
+            _sockClient = new SockClient(accountKeyId, secretKey, httpAlpacaBaseUrl);
             _sockClient.OnTradeUpdate += OnTradeUpdate;
             _sockClient.OnError += OnSockClientError;
 
-            // polygon client for alpaca
-            _natsClient = new NatsClient(accountKeyId, baseUrl.Contains("staging"));
-            _natsClient.QuoteReceived += OnQuoteReceived;
-            _natsClient.TradeReceived += OnTradeReceived;
-            _natsClient.OnError += OnNatsClientError;
+            // Polygon Streaming client for Alpaca (streams trade and quote data)
+            _polygonStreamingClient = new PolygonStreamingClient(new PolygonStreamingClientConfiguration
+            {
+                ApiEndpoint = Environments.Live.PolygonStreamingApi,
+                KeyId = accountKeyId,
+                WebSocketFactory = new WebSocketSharpFactory()
+            });
+            _polygonStreamingClient.QuoteReceived += OnQuoteReceived;
+            _polygonStreamingClient.TradeReceived += OnTradeReceived;
+            _polygonStreamingClient.OnError += OnPolygonStreamingClientError;
         }
 
         #region IBrokerage implementation
@@ -121,7 +143,11 @@ namespace QuantConnect.Brokerages.Alpaca
             if (IsConnected) return;
 
             _sockClient.ConnectAsync().SynchronouslyAwaitTask();
-            _natsClient.Open();
+
+            if (_handlesMarketData)
+            {
+                _polygonStreamingClient.ConnectAndAuthenticateAsync().SynchronouslyAwaitTask();
+            }
 
             _isConnected = true;
 
@@ -208,7 +234,11 @@ namespace QuantConnect.Brokerages.Alpaca
             _connectionMonitorThread?.Join();
 
             _sockClient.DisconnectAsync().SynchronouslyAwaitTask();
-            _natsClient.Close();
+
+            if (_handlesMarketData)
+            {
+                _polygonStreamingClient.DisconnectAsync().SynchronouslyAwaitTask();
+            }
 
             _isConnected = false;
         }
@@ -223,7 +253,7 @@ namespace QuantConnect.Brokerages.Alpaca
 
             _cancellationTokenSource.Dispose();
             _sockClient?.Dispose();
-            _natsClient?.Dispose();
+            _polygonStreamingClient?.Dispose();
 
             _messagingRateLimiter.Dispose();
         }
@@ -236,7 +266,7 @@ namespace QuantConnect.Brokerages.Alpaca
         {
             CheckRateLimiting();
 
-            var task = _restClient.GetAccountAsync();
+            var task = _alpacaTradingClient.GetAccountAsync();
             var balance = task.SynchronouslyAwaitTaskResult();
 
             return new List<CashAmount>
@@ -254,7 +284,7 @@ namespace QuantConnect.Brokerages.Alpaca
         {
             CheckRateLimiting();
 
-            var task = _restClient.ListPositionsAsync();
+            var task = _alpacaTradingClient.ListPositionsAsync();
             var holdings = task.SynchronouslyAwaitTaskResult();
 
             return holdings.Select(ConvertHolding).ToList();
@@ -269,7 +299,7 @@ namespace QuantConnect.Brokerages.Alpaca
         {
             CheckRateLimiting();
 
-            var task = _restClient.ListOrdersAsync();
+            var task = _alpacaTradingClient.ListAllOrdersAsync();
             var orders = task.SynchronouslyAwaitTaskResult();
 
             return orders.Select(ConvertOrder).ToList();
@@ -342,7 +372,7 @@ namespace QuantConnect.Brokerages.Alpaca
             foreach (var orderId in order.BrokerId)
             {
                 CheckRateLimiting();
-                var task = _restClient.DeleteOrderAsync(new Guid(orderId));
+                var task = _alpacaTradingClient.DeleteOrderAsync(new Guid(orderId));
                 task.SynchronouslyAwaitTaskResult();
             }
 

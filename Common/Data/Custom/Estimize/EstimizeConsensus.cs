@@ -16,6 +16,7 @@
 using Newtonsoft.Json;
 using System;
 using System.IO;
+using NodaTime;
 using static QuantConnect.StringExtensions;
 
 namespace QuantConnect.Data.Custom.Estimize
@@ -23,7 +24,6 @@ namespace QuantConnect.Data.Custom.Estimize
     /// <summary>
     /// Consensus of the specified release
     /// </summary>
-    [JsonObject(MemberSerialization.OptIn)]
     public class EstimizeConsensus : BaseData
     {
         /// <summary>
@@ -83,7 +83,11 @@ namespace QuantConnect.Data.Custom.Estimize
         /// The timestamp of this consensus (UTC)
         /// </summary>
         [JsonProperty(PropertyName = "updated_at")]
-        public DateTime UpdatedAt { get; set; }
+        public DateTime UpdatedAt
+        {
+            get { return Time; }
+            set { Time = value; }
+        }
 
         /// <summary>
         /// The fiscal year for the release
@@ -119,10 +123,9 @@ namespace QuantConnect.Data.Custom.Estimize
             var csv = csvLine.Split(',');
 
             UpdatedAt = Parse.DateTimeExact(csv[0], "yyyyMMdd HH:mm:ss");
-            Time = UpdatedAt;
             Id = csv[1];
-            Source = csv[2].ConvertInvariant<Source>();
-            Type = csv[3].IfNotNullOrEmpty(s => s.ConvertInvariant<Type>());
+            Source = (Source)Enum.Parse(typeof(Source), csv[2]);
+            Type = csv[3].IfNotNullOrEmpty(s => (Type)Enum.Parse(typeof(Type), s));
             Mean = csv[4].IfNotNullOrEmpty<decimal?>(s => Parse.Decimal(s));
             High = csv[5].IfNotNullOrEmpty<decimal?>(s => Parse.Decimal(s));
             Low = csv[6].IfNotNullOrEmpty<decimal?>(s => Parse.Decimal(s));
@@ -141,20 +144,12 @@ namespace QuantConnect.Data.Custom.Estimize
         /// <returns>Subscription Data Source.</returns>
         public override SubscriptionDataSource GetSource(SubscriptionDataConfig config, DateTime date, bool isLiveMode)
         {
-            if (!config.Symbol.Value.EndsWith(".C"))
-            {
-                throw new ArgumentException($"EstimizeConsensus.GetSource(): Invalid symbol {config.Symbol}");
-            }
-
-            var symbol = config.Symbol.Value;
-            symbol = symbol.Substring(0, symbol.Length - 2);
-
             var source = Path.Combine(
                 Globals.DataFolder,
                 "alternative",
                 "estimize",
                 "consensus",
-                $"{symbol.ToLowerInvariant()}.csv"
+                $"{config.Symbol.Value.ToLowerInvariant()}.csv"
             );
             return new SubscriptionDataSource(source, SubscriptionTransportMedium.LocalFile, FileFormat.Csv);
         }
@@ -190,6 +185,24 @@ namespace QuantConnect.Data.Custom.Estimize
                    Invariant($"Count: {Count} on ") +
                    Invariant($"{EndTime:yyyyMMdd} ") +
                    Invariant($"by {Source}");
+        }
+
+        /// <summary>
+        /// Indicates if there is support for mapping
+        /// </summary>
+        /// <returns>True indicates mapping should be used</returns>
+        public override bool RequiresMapping()
+        {
+            return true;
+        }
+
+        /// <summary>
+        /// Specifies the data time zone for this data type. This is useful for custom data types
+        /// </summary>
+        /// <returns>The <see cref="DateTimeZone"/> of this data type</returns>
+        public override DateTimeZone DataTimeZone()
+        {
+            return TimeZones.Utc;
         }
     }
 

@@ -96,16 +96,55 @@ namespace QuantConnect.Orders
             order.Id = jObject["Id"].Value<int>();
             order.Status = (OrderStatus) jObject["Status"].Value<int>();
             order.Time = jObject["Time"].Value<DateTime>();
-            order.Tag = jObject["Tag"].Value<string>();
+
+            var orderSubmissionData = jObject["OrderSubmissionData"];
+            if (orderSubmissionData != null && orderSubmissionData.Type != JTokenType.Null)
+            {
+                var bidPrice = orderSubmissionData["BidPrice"].Value<decimal>();
+                var askPrice = orderSubmissionData["AskPrice"].Value<decimal>();
+                var lastPrice = orderSubmissionData["LastPrice"].Value<decimal>();
+                order.OrderSubmissionData = new OrderSubmissionData(bidPrice, askPrice, lastPrice);
+            }
+
+            var lastFillTime = jObject["LastFillTime"];
+            var lastUpdateTime = jObject["LastUpdateTime"];
+            var canceledTime = jObject["CanceledTime"];
+
+            if (canceledTime != null && canceledTime.Type != JTokenType.Null)
+            {
+                order.CanceledTime = canceledTime.Value<DateTime>();
+            }
+            if (lastFillTime != null && lastFillTime.Type != JTokenType.Null)
+            {
+                order.LastFillTime = lastFillTime.Value<DateTime>();
+            }
+            if (lastUpdateTime != null && lastUpdateTime.Type != JTokenType.Null)
+            {
+                order.LastUpdateTime = lastUpdateTime.Value<DateTime>();
+            }
+            var tag = jObject["Tag"];
+            if (tag != null && tag.Type != JTokenType.Null)
+            {
+                order.Tag = tag.Value<string>();
+            }
+            else
+            {
+                order.Tag = "";
+            }
 
             order.Quantity = jObject["Quantity"].Value<decimal>();
 
             order.Price = jObject["Price"].Value<decimal>();
+            var priceCurrency = jObject["PriceCurrency"];
+            if (priceCurrency != null && priceCurrency.Type != JTokenType.Null)
+            {
+                order.PriceCurrency = priceCurrency.Value<string>();
+            }
             var securityType = (SecurityType) jObject["SecurityType"].Value<int>();
             order.BrokerId = jObject["BrokerId"].Select(x => x.Value<string>()).ToList();
             order.ContingentId = jObject["ContingentId"].Value<int>();
 
-            var timeInForce = jObject["TimeInForce"] ?? jObject["Duration"];
+            var timeInForce = jObject["Properties"]?["TimeInForce"] ?? jObject["TimeInForce"] ?? jObject["Duration"];
             order.Properties.TimeInForce = timeInForce != null
                 ? CreateTimeInForce(timeInForce, jObject)
                 : TimeInForce.GoodTilCanceled;
@@ -158,21 +197,21 @@ namespace QuantConnect.Orders
                     break;
 
                 case OrderType.Limit:
-                    order = new LimitOrder {LimitPrice = jObject["LimitPrice"].Value<decimal>()};
+                    order = new LimitOrder {LimitPrice = jObject["LimitPrice"] == null ? default(decimal) : jObject["LimitPrice"].Value<decimal>() };
                     break;
 
                 case OrderType.StopMarket:
                     order = new StopMarketOrder
                     {
-                        StopPrice = jObject["StopPrice"].Value<decimal>()
+                        StopPrice = jObject["StopPrice"] == null ? default(decimal) : jObject["StopPrice"].Value<decimal>()
                     };
                     break;
 
                 case OrderType.StopLimit:
                     order = new StopLimitOrder
                     {
-                        LimitPrice = jObject["LimitPrice"].Value<decimal>(),
-                        StopPrice = jObject["StopPrice"].Value<decimal>()
+                        LimitPrice = jObject["LimitPrice"] == null ? default(decimal) : jObject["LimitPrice"].Value<decimal>(),
+                        StopPrice = jObject["StopPrice"] == null ? default(decimal) : jObject["StopPrice"].Value<decimal>()
                     };
                     break;
 

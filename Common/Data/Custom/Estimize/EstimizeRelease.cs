@@ -16,6 +16,7 @@
 using Newtonsoft.Json;
 using System;
 using System.IO;
+using NodaTime;
 using static QuantConnect.StringExtensions;
 
 namespace QuantConnect.Data.Custom.Estimize
@@ -47,7 +48,11 @@ namespace QuantConnect.Data.Custom.Estimize
         /// The date of the release
         /// </summary>
         [JsonProperty(PropertyName = "release_date")]
-        public DateTime ReleaseDate { get; set; }
+        public DateTime ReleaseDate
+        {
+            get { return Time; }
+            set { Time = value; }
+        }
 
         /// <summary>
         /// The date of the release
@@ -125,7 +130,6 @@ namespace QuantConnect.Data.Custom.Estimize
             var csv = csvLine.Split(',');
 
             ReleaseDate = Parse.DateTimeExact(csv[0].Trim(), "yyyyMMdd HH:mm:ss");
-            Time = ReleaseDate;
             Id = csv[1];
             FiscalYear = Parse.Int(csv[2]);
             FiscalQuarter = Parse.Int(csv[3]);
@@ -148,20 +152,12 @@ namespace QuantConnect.Data.Custom.Estimize
         /// <returns>Subscription Data Source.</returns>
         public override SubscriptionDataSource GetSource(SubscriptionDataConfig config, DateTime date, bool isLiveMode)
         {
-            if (!config.Symbol.Value.EndsWith(".R"))
-            {
-                throw new ArgumentException($"EstimizeRelease.GetSource(): Invalid symbol {config.Symbol}");
-            }
-
-            var symbol = config.Symbol.Value;
-            symbol = symbol.Substring(0, symbol.Length - 2);
-
             var source = Path.Combine(
                 Globals.DataFolder,
                 "alternative",
                 "estimize",
                 "release",
-                $"{symbol.ToLowerInvariant()}.csv"
+                $"{config.Symbol.Value.ToLowerInvariant()}.csv"
             );
             return new SubscriptionDataSource(source, SubscriptionTransportMedium.LocalFile, FileFormat.Csv);
         }
@@ -193,6 +189,24 @@ namespace QuantConnect.Data.Custom.Estimize
                    Invariant($"EPS: {Eps} ") +
                    Invariant($"Revenue: {Revenue} on ") +
                    Invariant($"{EndTime:yyyyMMdd}");
+        }
+
+        /// <summary>
+        /// Indicates if there is support for mapping
+        /// </summary>
+        /// <returns>True indicates mapping should be used</returns>
+        public override bool RequiresMapping()
+        {
+            return true;
+        }
+
+        /// <summary>
+        /// Specifies the data time zone for this data type. This is useful for custom data types
+        /// </summary>
+        /// <returns>The <see cref="DateTimeZone"/> of this data type</returns>
+        public override DateTimeZone DataTimeZone()
+        {
+            return TimeZones.Utc;
         }
     }
 }

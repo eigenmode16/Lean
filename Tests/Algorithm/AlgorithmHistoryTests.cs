@@ -20,7 +20,12 @@ using NodaTime;
 using NUnit.Framework;
 using QuantConnect.Algorithm;
 using QuantConnect.Data;
+using QuantConnect.Data.Auxiliary;
+using QuantConnect.Data.Market;
+using QuantConnect.Lean.Engine.DataFeeds;
+using QuantConnect.Lean.Engine.HistoricalData;
 using QuantConnect.Tests.Engine.DataFeeds;
+using QuantConnect.Util;
 using HistoryRequest = QuantConnect.Data.HistoryRequest;
 
 namespace QuantConnect.Tests.Algorithm
@@ -53,7 +58,9 @@ namespace QuantConnect.Tests.Algorithm
             {
                 fillForwardResolution = resolution;
             }
-            Assert.AreEqual(1, _testHistoryProvider.HistryRequests.Count);
+
+            var expectedCount = resolution == Resolution.Hour || resolution == Resolution.Daily ? 1 : 2;
+            Assert.AreEqual(expectedCount, _testHistoryProvider.HistryRequests.Count);
             Assert.AreEqual(Symbols.SPY, _testHistoryProvider.HistryRequests.First().Symbol);
             Assert.AreEqual(resolution, _testHistoryProvider.HistryRequests.First().Resolution);
             Assert.IsFalse(_testHistoryProvider.HistryRequests.First().IncludeExtendedMarketHours);
@@ -78,7 +85,9 @@ namespace QuantConnect.Tests.Algorithm
             {
                 fillForwardResolution = resolution;
             }
-            Assert.AreEqual(1, _testHistoryProvider.HistryRequests.Count);
+
+            var expectedCount = resolution == Resolution.Hour || resolution == Resolution.Daily ? 1 : 2;
+            Assert.AreEqual(expectedCount, _testHistoryProvider.HistryRequests.Count);
             Assert.AreEqual(Symbols.SPY, _testHistoryProvider.HistryRequests.First().Symbol);
             Assert.AreEqual(resolution, _testHistoryProvider.HistryRequests.First().Resolution);
             Assert.IsFalse(_testHistoryProvider.HistryRequests.First().IncludeExtendedMarketHours);
@@ -94,7 +103,7 @@ namespace QuantConnect.Tests.Algorithm
             _algorithm.SetStartDate(2013, 10, 07);
             _algorithm.History(new [] {Symbols.SPY}, new DateTime(1,1,1,1,1,1), new DateTime(1, 1, 1, 1, 1, 2), Resolution.Tick, fillForward: true);
 
-            Assert.AreEqual(1, _testHistoryProvider.HistryRequests.Count);
+            Assert.AreEqual(2, _testHistoryProvider.HistryRequests.Count);
             Assert.AreEqual(Symbols.SPY, _testHistoryProvider.HistryRequests.First().Symbol);
             Assert.AreEqual(Resolution.Tick, _testHistoryProvider.HistryRequests.First().Resolution);
             Assert.IsFalse(_testHistoryProvider.HistryRequests.First().IncludeExtendedMarketHours);
@@ -104,10 +113,66 @@ namespace QuantConnect.Tests.Algorithm
             Assert.AreEqual(TickType.Trade, _testHistoryProvider.HistryRequests.First().TickType);
         }
 
+        [Test]
+        public void GetLastKnownPriceOfIlliquidAsset_RealData()
+        {
+            var algorithm = new QCAlgorithm();
+            algorithm.SubscriptionManager.SetDataManager(new DataManagerStub(algorithm));
+            algorithm.HistoryProvider = new SubscriptionDataReaderHistoryProvider();
+            var cacheProvider = new ZipDataCacheProvider(new DefaultDataProvider());
+            algorithm.HistoryProvider.Initialize(new HistoryProviderInitializeParameters(
+                null,
+                null,
+                new DefaultDataProvider(),
+                cacheProvider,
+                new LocalDiskMapFileProvider(),
+                new LocalDiskFactorFileProvider(),
+                null,
+                false));
+
+            algorithm.SetDateTime(new DateTime(2014, 6, 6, 15, 0, 0));
+
+            //20140606_twx_minute_quote_american_call_230000_20150117.csv
+            var optionSymbol = Symbol.CreateOption("TWX", Market.USA, OptionStyle.American, OptionRight.Call, 23, new DateTime(2015,1,17));
+            var option = algorithm.AddOptionContract(optionSymbol);
+
+            var lastKnownPrice = algorithm.GetLastKnownPrice(option);
+            Assert.IsNotNull(lastKnownPrice);
+
+            // Data gap of more than 15 minutes
+            Assert.Greater((algorithm.Time - lastKnownPrice.EndTime).TotalMinutes, 15);
+
+            cacheProvider.DisposeSafely();
+        }
+
+
+        [Test]
+        public void GetLastKnownPriceOfIlliquidAsset_TestData()
+        {
+            // Set the start date on Tuesday
+            _algorithm.SetStartDate(2014, 6, 10);
+
+            var optionSymbol = Symbol.CreateOption("TWX", Market.USA, OptionStyle.American, OptionRight.Call, 23, new DateTime(2015, 1, 17));
+            var option = _algorithm.AddOptionContract(optionSymbol);
+
+            // The last known price is on Friday, so we missed data from Monday and no data during Weekend
+            var barTime = new DateTime(2014, 6, 6, 15, 0, 0, 0);
+            _testHistoryProvider.Slices = new[] 
+            { 
+                new Slice(barTime, new[] { new TradeBar(barTime, optionSymbol, 100, 100, 100, 100, 1) })
+            }.ToList();
+
+            var lastKnownPrice = _algorithm.GetLastKnownPrice(option);
+            Assert.IsNotNull(lastKnownPrice);
+            Assert.AreEqual(barTime.AddMinutes(1), lastKnownPrice.EndTime);
+        }
+
         private class TestHistoryProvider : HistoryProviderBase
         {
             public override int DataPointCount { get; }
             public List<HistoryRequest> HistryRequests { get; } = new List<HistoryRequest>();
+
+            public List<Slice> Slices { get; set; } = new List<Slice>();
 
             public override void Initialize(HistoryProviderInitializeParameters parameters)
             {
@@ -121,7 +186,10 @@ namespace QuantConnect.Tests.Algorithm
                     HistryRequests.Add(request);
                 }
 
-                return new List<Slice>();
+                var startTime = requests.Min(x => x.StartTimeUtc.ConvertFromUtc(x.DataTimeZone));
+                var endTime = requests.Max(x => x.EndTimeUtc.ConvertFromUtc(x.DataTimeZone));
+
+                return Slices.Where(x => x.Time >= startTime && x.Time <= endTime).ToList();
             }
         }
     }

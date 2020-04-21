@@ -20,6 +20,8 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Reflection;
+using System.Reflection.Emit;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -28,9 +30,16 @@ using System.Threading.Tasks;
 using Newtonsoft.Json;
 using NodaTime;
 using Python.Runtime;
+using QuantConnect.Algorithm.Framework.Alphas;
+using QuantConnect.Algorithm.Framework.Portfolio;
 using QuantConnect.Data.UniverseSelection;
 using QuantConnect.Data;
+using QuantConnect.Interfaces;
+using QuantConnect.Logging;
 using QuantConnect.Orders;
+using QuantConnect.Packets;
+using QuantConnect.Python;
+using QuantConnect.Scheduling;
 using QuantConnect.Securities;
 using QuantConnect.Util;
 using Timer = System.Timers.Timer;
@@ -43,6 +52,270 @@ namespace QuantConnect
     /// </summary>
     public static class Extensions
     {
+        private static readonly Dictionary<IntPtr, PythonActivator> PythonActivators
+            = new Dictionary<IntPtr, PythonActivator>();
+
+        /// <summary>
+        /// Converts the provided string into camel case notation
+        /// </summary>
+        public static string ToCamelCase(this string value)
+        {
+            if (string.IsNullOrEmpty(value))
+            {
+                return value;
+            }
+
+            if (value.Length == 1)
+            {
+                return value.ToLowerInvariant();
+            }
+            return char.ToLowerInvariant(value[0]) + value.Substring(1);
+        }
+
+        /// <summary>
+        /// Helper method to batch a collection of <see cref="AlphaResultPacket"/> into 1 single instance.
+        /// Will return null if the provided list is empty. Will keep the last Order instance per order id,
+        /// which is the latest. Implementations trusts the provided 'resultPackets' list to batch is in order
+        /// </summary>
+        public static AlphaResultPacket Batch(this List<AlphaResultPacket> resultPackets)
+        {
+            AlphaResultPacket resultPacket = null;
+
+            // batch result packets into a single packet
+            if (resultPackets.Count > 0)
+            {
+                // we will batch results into the first packet
+                resultPacket = resultPackets[0];
+                for (var i = 1; i < resultPackets.Count; i++)
+                {
+                    var newerPacket = resultPackets[i];
+
+                    // only batch current packet if there actually is data
+                    if (newerPacket.Insights != null)
+                    {
+                        if (resultPacket.Insights == null)
+                        {
+                            // initialize the collection if it isn't there
+                            resultPacket.Insights = new List<Insight>();
+                        }
+                        resultPacket.Insights.AddRange(newerPacket.Insights);
+                    }
+
+                    // only batch current packet if there actually is data
+                    if (newerPacket.OrderEvents != null)
+                    {
+                        if (resultPacket.OrderEvents == null)
+                        {
+                            // initialize the collection if it isn't there
+                            resultPacket.OrderEvents = new List<OrderEvent>();
+                        }
+                        resultPacket.OrderEvents.AddRange(newerPacket.OrderEvents);
+                    }
+
+                    // only batch current packet if there actually is data
+                    if (newerPacket.Orders != null)
+                    {
+                        if (resultPacket.Orders == null)
+                        {
+                            // initialize the collection if it isn't there
+                            resultPacket.Orders = new List<Order>();
+                        }
+                        resultPacket.Orders.AddRange(newerPacket.Orders);
+
+                        // GroupBy guarantees to respect original order, so we want to get the last order instance per order id
+                        // this way we only keep the most updated version
+                        resultPacket.Orders = resultPacket.Orders.GroupBy(order => order.Id)
+                            .Select(ordersGroup => ordersGroup.Last()).ToList();
+                    }
+                }
+            }
+            return resultPacket;
+        }
+
+        /// <summary>
+        /// Helper method to safely stop a running thread
+        /// </summary>
+        /// <param name="thread">The thread to stop</param>
+        /// <param name="timeout">The timeout to wait till the thread ends after which abort will be called</param>
+        /// <param name="token">Cancellation token source to use if any</param>
+        public static void StopSafely(this Thread thread, TimeSpan timeout, CancellationTokenSource token = null)
+        {
+            if (thread != null)
+            {
+                try
+                {
+                    if (token != null && !token.IsCancellationRequested)
+                    {
+                        token.Cancel(false);
+                    }
+                    Log.Trace($"StopSafely(): waiting for '{thread.Name}' thread to stop...");
+                    // just in case we add a time out
+                    if (!thread.Join(timeout))
+                    {
+                        Log.Error($"StopSafely(): Timeout waiting for '{thread.Name}' thread to stop");
+                        thread.Abort();
+                    }
+                }
+                catch (Exception exception)
+                {
+                    // just in case catch any exceptions
+                    Log.Error(exception);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Generates a hash code from a given collection of orders
+        /// </summary>
+        /// <param name="orders">The order collection</param>
+        /// <returns>The hash value</returns>
+        public static int GetHash(this IDictionary<int, Order> orders)
+        {
+            var joinedOrders = string.Join(
+                ",",
+                orders
+                    .OrderBy(pair => pair.Key)
+                    .Select(pair =>
+                        {
+                            // this is required to avoid any small differences between python and C#
+                            var order = pair.Value;
+                            order.Price = order.Price.SmartRounding();
+                            var limit = order as LimitOrder;
+                            if (limit != null)
+                            {
+                                limit.LimitPrice = limit.LimitPrice.SmartRounding();
+                            }
+                            var stopLimit = order as StopLimitOrder;
+                            if (stopLimit != null)
+                            {
+                                stopLimit.LimitPrice = stopLimit.LimitPrice.SmartRounding();
+                                stopLimit.StopPrice = stopLimit.StopPrice.SmartRounding();
+                            }
+                            var stopMarket = order as StopMarketOrder;
+                            if (stopMarket != null)
+                            {
+                                stopMarket.StopPrice = stopMarket.StopPrice.SmartRounding();
+                            }
+                            return JsonConvert.SerializeObject(pair.Value, Formatting.None);
+                        }
+                    )
+            );
+            return joinedOrders.GetHashCode();
+        }
+
+        /// <summary>
+        /// Converts a date rule into a function that receives current time
+        /// and returns the next date.
+        /// </summary>
+        /// <param name="dateRule">The date rule to convert</param>
+        /// <returns>A function that will enumerate the provided date rules</returns>
+        public static Func<DateTime, DateTime?> ToFunc(this IDateRule dateRule)
+        {
+            IEnumerator<DateTime> dates = null;
+            return timeUtc =>
+            {
+                if (dates == null)
+                {
+                    dates = dateRule.GetDates(timeUtc, Time.EndOfTime).GetEnumerator();
+                    if (!dates.MoveNext())
+                    {
+                        return Time.EndOfTime;
+                    }
+                }
+
+                try
+                {
+                    // only advance enumerator if provided time is past or at our current
+                    if (timeUtc >= dates.Current)
+                    {
+                        if (!dates.MoveNext())
+                        {
+                            return Time.EndOfTime;
+                        }
+                    }
+                    return dates.Current;
+                }
+                catch (InvalidOperationException)
+                {
+                    // enumeration ended
+                    return Time.EndOfTime;
+                }
+            };
+        }
+
+        /// <summary>
+        /// Returns true if the specified <see cref="Series"/> instance holds no <see cref="ChartPoint"/>
+        /// </summary>
+        public static bool IsEmpty(this Series series)
+        {
+            return series.Values.Count == 0;
+        }
+
+        /// <summary>
+        /// Returns if the specified <see cref="Chart"/> instance  holds no <see cref="Series"/>
+        /// or they are all empty <see cref="IsEmpty(Series)"/>
+        /// </summary>
+        public static bool IsEmpty(this Chart chart)
+        {
+            return chart.Series.Values.All(IsEmpty);
+        }
+
+        /// <summary>
+        /// Gets a python method by name
+        /// </summary>
+        /// <param name="instance">The object instance to search the method in</param>
+        /// <param name="name">The name of the method</param>
+        /// <returns>The python method or null if not defined or CSharp implemented</returns>
+        public static dynamic GetPythonMethod(this PyObject instance, string name)
+        {
+            using (Py.GIL())
+            {
+                var method = instance.GetAttr(name);
+                var pythonType = method.GetPythonType();
+                var isPythonDefined = pythonType.Repr().Equals("<class \'method\'>");
+
+                return isPythonDefined ? method : null;
+            }
+        }
+
+        /// <summary>
+        /// Returns an ordered enumerable where position reducing orders are executed first
+        /// and the remaining orders are executed in decreasing order value.
+        /// Will NOT return targets for securities that have no data yet.
+        /// Will NOT return targets for which current holdings + open orders quantity, sum up to the target quantity
+        /// </summary>
+        /// <param name="targets">The portfolio targets to order by margin</param>
+        /// <param name="algorithm">The algorithm instance</param>
+        /// <param name="targetIsDelta">True if the target quantity is the delta between the
+        /// desired and existing quantity</param>
+        public static IEnumerable<IPortfolioTarget> OrderTargetsByMarginImpact(
+            this IEnumerable<IPortfolioTarget> targets,
+            IAlgorithm algorithm,
+            bool targetIsDelta = false)
+        {
+            return targets.Select(x => new {
+                    PortfolioTarget = x,
+                    TargetQuantity = x.Quantity,
+                    ExistingQuantity = algorithm.Portfolio[x.Symbol].Quantity
+                                       + algorithm.Transactions.GetOpenOrderTickets(x.Symbol)
+                                           .Aggregate(0m, (d, t) => d + t.Quantity - t.QuantityFilled),
+                    Security = algorithm.Securities[x.Symbol]
+                })
+                .Where(x => x.Security.HasData
+                            && (targetIsDelta ? Math.Abs(x.TargetQuantity) : Math.Abs(x.TargetQuantity - x.ExistingQuantity))
+                            >= x.Security.SymbolProperties.LotSize
+                )
+                .Select(x => new {
+                    PortfolioTarget = x.PortfolioTarget,
+                    OrderValue = Math.Abs((targetIsDelta ? x.TargetQuantity : (x.TargetQuantity - x.ExistingQuantity)) * x.Security.Price),
+                    IsReducingPosition = x.ExistingQuantity != 0
+                                         && Math.Abs((targetIsDelta ? (x.TargetQuantity + x.ExistingQuantity) : x.TargetQuantity)) < Math.Abs(x.ExistingQuantity)
+                })
+                .OrderByDescending(x => x.IsReducingPosition)
+                .ThenByDescending(x => x.OrderValue)
+                .Select(x => x.PortfolioTarget);
+        }
+
         /// <summary>
         /// Given a type will create a new instance using the parameterless constructor
         /// and assert the type implements <see cref="BaseData"/>
@@ -284,12 +557,14 @@ namespace QuantConnect
         /// <returns>New instance with just 3 decimal places</returns>
         public static decimal TruncateTo3DecimalPlaces(this decimal value)
         {
-            if (value == decimal.MaxValue
-                || value == decimal.MinValue
+            // we will multiply by 1k bellow, if its bigger it will stack overflow
+            if (value >= decimal.MaxValue / 1000
+                || value <= decimal.MinValue / 1000
                 || value == 0)
             {
                 return value;
             }
+
             return Math.Truncate(1000 * value) / 1000;
         }
 
@@ -308,8 +583,7 @@ namespace QuantConnect
             }
 
             // this is good for forex and other small numbers
-            var d = (double)input;
-            return (decimal)d.RoundToSignificantDigits(7);
+            return input.RoundToSignificantDigits(7).Normalize();
         }
 
         /// <summary>
@@ -469,34 +743,32 @@ namespace QuantConnect
         /// </summary>
         /// <param name="str">The string to be broken into csv</param>
         /// <param name="size">The expected size of the output list</param>
+        /// <param name="delimiter">The delimiter used to separate entries in the line</param>
         /// <returns>A list of the csv pieces</returns>
-        public static List<string> ToCsvData(this string str, int size = 4)
+        public static List<string> ToCsvData(this string str, int size = 4, char delimiter = ',')
         {
             var csv = new List<string>(size);
 
-            int last = -1;
-            bool textDataField = false;
+            var last = -1;
+            var count = 0;
+            var textDataField = false;
 
             for (var i = 0; i < str.Length; i++)
             {
-                switch (str[i])
+                var current = str[i];
+                if (current == '"')
                 {
-                    case '"':
-                        textDataField = !textDataField;
-                        break;
-                    case ',':
-                        if (!textDataField)
-                        {
-                            csv.Add(str.Substring(last + 1, (i - last)).Trim(' ', ','));
-                            last = i;
-                        }
-                        break;
-                    default:
-                        break;
+                    textDataField = !textDataField;
+                }
+                else if (!textDataField && current == delimiter)
+                {
+                    csv.Add(str.Substring(last + 1, (i - last)).Trim(' ', ','));
+                    last = i;
+                    count++;
                 }
             }
 
-            if (last != str.Length - 1)
+            if (last != 0)
             {
                 csv.Add(str.Substring(last + 1).Trim());
             }
@@ -529,7 +801,7 @@ namespace QuantConnect
         /// <returns>Last 4 character string of string.</returns>
         public static string GetExtension(this string str) {
             var ext = str.Substring(Math.Max(0, str.Length - 4));
-            var allowedExt = new List<string>() { ".zip", ".csv", ".json" };
+            var allowedExt = new List<string> { ".zip", ".csv", ".json", ".tsv" };
             if (!allowedExt.Contains(ext))
             {
                 ext = ".custom";
@@ -1249,6 +1521,10 @@ namespace QuantConnect
         /// <summary>
         /// Tries to convert a <see cref="PyObject"/> into a managed object
         /// </summary>
+        /// <remarks>This method is not working correctly for a wrapped <see cref="TimeSpan"/> instance,
+        /// probably because it is a struct, using <see cref="PyObject.As{T}"/> is a valid work around.
+        /// Not used here because it caused errors
+        /// </remarks>
         /// <typeparam name="T">Target type of the resulting managed object</typeparam>
         /// <param name="pyObject">PyObject to be converted</param>
         /// <param name="result">Managed object </param>
@@ -1421,6 +1697,50 @@ namespace QuantConnect
         }
 
         /// <summary>
+        /// Convert a <see cref="PyObject"/> into a managed dictionary
+        /// </summary>
+        /// <typeparam name="TKey">Target type of the resulting dictionary key</typeparam>
+        /// <typeparam name="TValue">Target type of the resulting dictionary value</typeparam>
+        /// <param name="pyObject">PyObject to be converted</param>
+        /// <returns>Dictionary of TValue keyed by TKey</returns>
+        public static Dictionary<TKey, TValue> ConvertToDictionary<TKey, TValue>(this PyObject pyObject)
+        {
+            var result = new List<KeyValuePair<TKey, TValue>>();
+            using (Py.GIL())
+            {
+                var inputType = pyObject.GetPythonType().ToString();
+                var targetType = nameof(PyDict);
+
+                try
+                {
+                    using (var pyDict = new PyDict(pyObject))
+                    {
+                        targetType = $"{typeof(TKey).Name}: {typeof(TValue).Name}";
+
+                        foreach (PyObject item in pyDict.Items())
+                        {
+                            inputType = $"{item[0].GetPythonType()}: {item[1].GetPythonType()}";
+
+                            var key = item[0].As<TKey>();
+                            var value = item[1].As<TValue>();
+
+                            result.Add(new KeyValuePair<TKey, TValue>(key, value));
+                        }
+                    }
+                }
+                catch (Exception e)
+                {
+                    throw new ArgumentException(
+                        $"ConvertToDictionary cannot be used to convert a {inputType} into {targetType}. Reason: {e.Message}",
+                        e
+                    );
+                }
+            }
+
+            return result.ToDictionary();
+        }
+
+        /// <summary>
         /// Gets Enumerable of <see cref="Symbol"/> from a PyObject
         /// </summary>
         /// <param name="pyObject">PyObject containing Symbol or Array of Symbol</param>
@@ -1463,6 +1783,28 @@ namespace QuantConnect
         }
 
         /// <summary>
+        /// Converts an IEnumerable to a PyList
+        /// </summary>
+        /// <param name="enumerable">IEnumerable object to convert</param>
+        /// <returns>PyList</returns>
+        public static PyList ToPyList(this IEnumerable enumerable)
+        {
+            using (Py.GIL())
+            {
+                var pyList = new PyList();
+                foreach (var item in enumerable)
+                {
+                    using (var pyObject = item.ToPython())
+                    {
+                        pyList.Append(pyObject);
+                    }
+                }
+
+                return pyList;
+            }
+        }
+
+        /// <summary>
         /// Converts the numeric value of one or more enumerated constants to an equivalent enumerated string.
         /// </summary>
         /// <param name="value">Numeric value</param>
@@ -1482,6 +1824,44 @@ namespace QuantConnect
                     throw new ArgumentException($"GetEnumString(): {pyObject.Repr()} is not a C# Type.");
                 }
             }
+        }
+
+        /// <summary>
+        /// Creates a type with a given name, if PyObject is not a CLR type. Otherwise, convert it.
+        /// </summary>
+        /// <param name="pyObject">Python object representing a type.</param>
+        /// <returns>Type object</returns>
+        public static Type CreateType(this PyObject pyObject)
+        {
+            Type type;
+            if (pyObject.TryConvert(out type) &&
+                type != typeof(PythonQuandl) &&
+                type != typeof(PythonData))
+            {
+                return type;
+            }
+
+            PythonActivator pythonType;
+            if (!PythonActivators.TryGetValue(pyObject.Handle, out pythonType))
+            {
+                AssemblyName an;
+                using (Py.GIL())
+                {
+                    an = new AssemblyName(pyObject.Repr().Split('\'')[1]);
+                }
+                var typeBuilder = AppDomain.CurrentDomain
+                    .DefineDynamicAssembly(an, AssemblyBuilderAccess.Run)
+                    .DefineDynamicModule("MainModule")
+                    .DefineType(an.Name, TypeAttributes.Class, type);
+
+                pythonType = new PythonActivator(typeBuilder.CreateType(), pyObject);
+
+                ObjectActivator.AddActivator(pythonType.Type, pythonType.Factory);
+
+                // Save to prevent future additions
+                PythonActivators.Add(pyObject.Handle, pythonType);
+            }
+            return pythonType.Type;
         }
 
         /// <summary>
