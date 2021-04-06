@@ -480,6 +480,57 @@ namespace QuantConnect.Algorithm
         }
 
         /// <summary>
+        /// Send a limit if touched order to the transaction handler:
+        /// </summary>
+        /// <param name="symbol">String symbol for the asset</param>
+        /// <param name="quantity">Quantity of shares for limit order</param>
+        /// <param name="triggerPrice">Trigger price for this order</param>
+        /// <param name="limitPrice">Limit price to fill this order</param>
+        /// <param name="tag">String tag for the order (optional)</param>
+        /// <returns>Order id</returns>
+        public OrderTicket LimitIfTouchedOrder(Symbol symbol, int quantity, decimal triggerPrice, decimal limitPrice, string tag = "")
+        {
+            return LimitIfTouchedOrder(symbol, (decimal)quantity, triggerPrice, limitPrice, tag);
+        }
+
+        /// <summary>
+        /// Send a limit if touched order to the transaction handler:
+        /// </summary>
+        /// <param name="symbol">String symbol for the asset</param>
+        /// <param name="quantity">Quantity of shares for limit order</param>
+        /// <param name="triggerPrice">Trigger price for this order</param>
+        /// <param name="limitPrice">Limit price to fill this order</param>
+        /// <param name="tag">String tag for the order (optional)</param>
+        /// <returns>Order id</returns>
+        public OrderTicket LimitIfTouchedOrder(Symbol symbol, double quantity, decimal triggerPrice, decimal limitPrice, string tag = "")
+        {
+            return LimitIfTouchedOrder(symbol, quantity.SafeDecimalCast(), triggerPrice, limitPrice, tag);
+        }
+
+        /// <summary>
+        /// Send a limit if touched order to the transaction handler:
+        /// </summary>
+        /// <param name="symbol">String symbol for the asset</param>
+        /// <param name="quantity">Quantity of shares for limit order</param>
+        /// <param name="triggerPrice">Trigger price for this order</param>
+        /// <param name="limitPrice">Limit price to fill this order</param>
+        /// <param name="tag">String tag for the order (optional)</param>
+        /// <returns>Order id</returns>
+        public OrderTicket LimitIfTouchedOrder(Symbol symbol, decimal quantity, decimal triggerPrice, decimal limitPrice, string tag = "")
+        {
+            var security = Securities[symbol];
+            var request = CreateSubmitOrderRequest(OrderType.LimitIfTouched, security, quantity, tag, triggerPrice: triggerPrice, limitPrice: limitPrice, properties: DefaultOrderProperties?.Clone());
+            var response = PreOrderChecks(request);
+            if (response.IsError)
+            {
+                return OrderTicket.InvalidSubmitRequest(Transactions, request, response);
+            }
+
+            //Add the order and create a new order Id.
+            return Transactions.AddOrder(request);
+        }
+
+        /// <summary>
         /// Send an exercise order to the transaction handler
         /// </summary>
         /// <param name="optionSymbol">String symbol for the option position</param>
@@ -559,39 +610,43 @@ namespace QuantConnect.Algorithm
             var orders = new List<OrderTicket>();
 
             // setting up the tag text for all orders of one strategy
-            var strategyTag = $"{strategy.Name} ({strategyQuantity.ToStringInvariant()})";
+            var tag = $"{strategy.Name} ({strategyQuantity.ToStringInvariant()})";
 
             // walking through all option legs and issuing orders
             if (strategy.OptionLegs != null)
             {
+                var underlying = strategy.Underlying;
                 foreach (var optionLeg in strategy.OptionLegs)
                 {
-                    var optionSeq = Securities.Where(kv => kv.Key.Underlying == strategy.Underlying &&
-                                                            kv.Key.ID.OptionRight == optionLeg.Right &&
-                                                            kv.Key.ID.Date == optionLeg.Expiration &&
-                                                            kv.Key.ID.StrikePrice == optionLeg.Strike);
+                    // search for both american/european style -- much better than looping through all securities
+                    var american = QuantConnect.Symbol.CreateOption(underlying, underlying.ID.Market,
+                        OptionStyle.American, optionLeg.Right, optionLeg.Strike, optionLeg.Expiration);
 
-                    if (optionSeq.Count() != 1)
+                    var european = QuantConnect.Symbol.CreateOption(underlying, underlying.ID.Market,
+                        OptionStyle.European, optionLeg.Right, optionLeg.Strike, optionLeg.Expiration);
+
+                    Security contract;
+                    if (!Securities.TryGetValue(american, out contract) && !Securities.TryGetValue(european, out contract))
                     {
                         throw new InvalidOperationException("Couldn't find the option contract in algorithm securities list. " +
                             Invariant($"Underlying: {strategy.Underlying}, option {optionLeg.Right}, strike {optionLeg.Strike}, ") +
-                            Invariant($"expiration: {optionLeg.Expiration}"));
+                            Invariant($"expiration: {optionLeg.Expiration}")
+                        );
                     }
 
-                    var option = optionSeq.First().Key;
-
+                    var orderQuantity = optionLeg.Quantity * strategyQuantity;
                     switch (optionLeg.OrderType)
                     {
                         case OrderType.Market:
-                            var marketOrder = MarketOrder(option, optionLeg.Quantity * strategyQuantity, tag: strategyTag);
-                            orders.Add(marketOrder);
+                            orders.Add(MarketOrder(contract.Symbol, orderQuantity, tag: tag));
                             break;
+
                         case OrderType.Limit:
-                            var limitOrder = LimitOrder(option, optionLeg.Quantity * strategyQuantity, optionLeg.OrderPrice, tag: strategyTag);
-                            orders.Add(limitOrder);
+                            orders.Add(LimitOrder(contract.Symbol, orderQuantity, optionLeg.OrderPrice, tag));
                             break;
+
                         default:
-                            throw new InvalidOperationException("Order type is not supported in option strategy: " + optionLeg.OrderType.ToString());
+                            throw new InvalidOperationException(Invariant($"Order type is not supported in option strategy: {optionLeg.OrderType}"));
                     }
                 }
             }
@@ -603,25 +658,28 @@ namespace QuantConnect.Algorithm
                 {
                     if (!Securities.ContainsKey(strategy.Underlying))
                     {
-                        var error = $"Couldn't find the option contract underlying in algorithm securities list. Underlying: {strategy.Underlying}";
-                        throw new InvalidOperationException(error);
+                        throw new InvalidOperationException(
+                            $"Couldn't find the option contract underlying in algorithm securities list. Underlying: {strategy.Underlying}"
+                        );
                     }
 
+                    var orderQuantity = underlyingLeg.Quantity * strategyQuantity;
                     switch (underlyingLeg.OrderType)
                     {
                         case OrderType.Market:
-                            var marketOrder = MarketOrder(strategy.Underlying, underlyingLeg.Quantity * strategyQuantity, tag: strategyTag);
-                            orders.Add(marketOrder);
+                            orders.Add(MarketOrder(strategy.Underlying, orderQuantity, tag: tag));
                             break;
+
                         case OrderType.Limit:
-                            var limitOrder = LimitOrder(strategy.Underlying, underlyingLeg.Quantity * strategyQuantity, underlyingLeg.OrderPrice, tag: strategyTag);
-                            orders.Add(limitOrder);
+                            orders.Add(LimitOrder(strategy.Underlying, orderQuantity, underlyingLeg.OrderPrice, tag));
                             break;
+
                         default:
-                            throw new InvalidOperationException("Order type is not supported in option strategy: " + underlyingLeg.OrderType.ToString());
+                            throw new InvalidOperationException(Invariant($"Order type is not supported in option strategy: {underlyingLeg.OrderType}"));
                     }
                 }
             }
+
             return orders;
         }
 
@@ -763,7 +821,7 @@ namespace QuantConnect.Algorithm
 
             if (request.OrderType == OrderType.OptionExercise)
             {
-                if (security.Type != SecurityType.Option)
+                if (!security.Type.IsOption())
                 {
                     return OrderResponse.Error(request, OrderResponseErrorCode.NonExercisableSecurity,
                         $"The security with symbol '{request.Symbol}' is not exercisable."
@@ -1103,9 +1161,9 @@ namespace QuantConnect.Algorithm
             return exchangeHours.IsOpen(time, false);
         }
 
-        private SubmitOrderRequest CreateSubmitOrderRequest(OrderType orderType, Security security, decimal quantity, string tag, IOrderProperties properties, decimal stopPrice = 0m, decimal limitPrice = 0m)
+        private SubmitOrderRequest CreateSubmitOrderRequest(OrderType orderType, Security security, decimal quantity, string tag, IOrderProperties properties, decimal stopPrice = 0m, decimal limitPrice = 0m,  decimal triggerPrice = 0m)
         {
-            return new SubmitOrderRequest(orderType, security.Type, security.Symbol, quantity, stopPrice, limitPrice, UtcTime, tag, properties);
+            return new SubmitOrderRequest(orderType, security.Type, security.Symbol, quantity, stopPrice, limitPrice, triggerPrice, UtcTime, tag, properties);
         }
     }
 }

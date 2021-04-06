@@ -17,6 +17,7 @@ using System;
 using System.Collections;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Collections.Immutable;
 using System.Globalization;
 using System.IO;
 using System.Linq;
@@ -48,7 +49,9 @@ using QuantConnect.Util;
 using Timer = System.Timers.Timer;
 using static QuantConnect.StringExtensions;
 using Microsoft.IO;
+using NodaTime.TimeZones;
 using QuantConnect.Data.Auxiliary;
+using QuantConnect.Securities.FutureOption;
 using QuantConnect.Securities.Option;
 
 namespace QuantConnect
@@ -60,9 +63,41 @@ namespace QuantConnect
     {
         private static RecyclableMemoryStreamManager MemoryManager = new RecyclableMemoryStreamManager();
         private static ConcurrentBag<Guid> Guids = new ConcurrentBag<Guid>();
+        private static readonly HashSet<string> _invalidSecurityTypes = new HashSet<string>();
 
         private static readonly Dictionary<IntPtr, PythonActivator> PythonActivators
             = new Dictionary<IntPtr, PythonActivator>();
+
+        /// <summary>
+        /// Maintains old behavior of NodaTime's (&lt; 2.0) daylight savings mapping.
+        /// We keep the old behavior to ensure the FillForwardEnumerator does not get stuck on an infinite loop.
+        /// The test `ConvertToSkipsDiscontinuitiesBecauseOfDaylightSavingsStart_AddingOneHour` and other related tests
+        /// assert the expected behavior, which is to ignore discontinuities in daylight savings resolving.
+        ///
+        /// More info can be found in the summary of the <see cref="Resolvers.LenientResolver"/> delegate.
+        /// </summary>
+        private static readonly ZoneLocalMappingResolver _mappingResolver = Resolvers.CreateMappingResolver(Resolvers.ReturnLater, Resolvers.ReturnStartOfIntervalAfter);
+
+        /// <summary>
+        /// The offset span from the market close to liquidate or exercise a security on the delisting date
+        /// </summary>
+        /// <remarks>Will no be used in live trading</remarks>
+        /// <remarks>By default span is negative 15 minutes. We want to liquidate before market closes if not, in some cases
+        /// like future options the market close would match the delisted event time and would cancel all orders and mark the security
+        /// as non tradable and delisted.</remarks>
+        public static TimeSpan DelistingMarketCloseOffsetSpan { get; set; } = TimeSpan.FromMinutes(-15);
+
+        /// <summary>
+        /// Safe multiplies a decimal by 100
+        /// </summary>
+        /// <param name="value">The decimal to multiply</param>
+        /// <returns>The result, maxed out at decimal.MaxValue</returns>
+        public static decimal SafeMultiply100(this decimal value)
+        {
+            const decimal max = decimal.MaxValue / 100m;
+            if (value >= max) return decimal.MaxValue;
+            return value * 100m;
+        }
 
         /// <summary>
         /// Will return a memory stream using the <see cref="RecyclableMemoryStreamManager"/> instance.
@@ -269,7 +304,6 @@ namespace QuantConnect
                     if (!thread.Join(timeout))
                     {
                         Log.Error($"StopSafely(): Timeout waiting for '{thread.Name}' thread to stop");
-                        thread.Abort();
                     }
                 }
                 catch (Exception exception)
@@ -285,7 +319,7 @@ namespace QuantConnect
         /// </summary>
         /// <param name="orders">The order collection</param>
         /// <returns>The hash value</returns>
-        public static int GetHash(this IDictionary<int, Order> orders)
+        public static string GetHash(this IDictionary<int, Order> orders)
         {
             var joinedOrders = string.Join(
                 ",",
@@ -312,11 +346,18 @@ namespace QuantConnect
                             {
                                 stopMarket.StopPrice = stopMarket.StopPrice.SmartRounding();
                             }
+                            var limitIfTouched = order as LimitIfTouchedOrder;
+                            if (limitIfTouched != null)
+                            {
+                                limitIfTouched.LimitPrice = limitIfTouched.LimitPrice.SmartRounding();
+                                limitIfTouched.TriggerPrice = limitIfTouched.TriggerPrice.SmartRounding();
+                            }
                             return JsonConvert.SerializeObject(pair.Value, Formatting.None);
                         }
                     )
             );
-            return joinedOrders.GetHashCode();
+
+            return joinedOrders.ToMD5();
         }
 
         /// <summary>
@@ -641,6 +682,116 @@ namespace QuantConnect
         }
 
         /// <summary>
+        /// Adds the specified element to the collection with the specified key. If an entry does not exist for the
+        /// specified key then one will be created.
+        /// </summary>
+        /// <typeparam name="TKey">The key type</typeparam>
+        /// <typeparam name="TElement">The collection element type</typeparam>
+        /// <param name="dictionary">The source dictionary to be added to</param>
+        /// <param name="key">The key</param>
+        /// <param name="element">The element to be added</param>
+        public static ImmutableDictionary<TKey, ImmutableHashSet<TElement>> Add<TKey, TElement>(
+            this ImmutableDictionary<TKey, ImmutableHashSet<TElement>> dictionary,
+            TKey key,
+            TElement element
+            )
+        {
+            ImmutableHashSet<TElement> set;
+            if (!dictionary.TryGetValue(key, out set))
+            {
+                set = ImmutableHashSet<TElement>.Empty.Add(element);
+                return dictionary.Add(key, set);
+            }
+
+            return dictionary.SetItem(key, set.Add(element));
+        }
+
+        /// <summary>
+        /// Adds the specified element to the collection with the specified key. If an entry does not exist for the
+        /// specified key then one will be created.
+        /// </summary>
+        /// <typeparam name="TKey">The key type</typeparam>
+        /// <typeparam name="TElement">The collection element type</typeparam>
+        /// <param name="dictionary">The source dictionary to be added to</param>
+        /// <param name="key">The key</param>
+        /// <param name="element">The element to be added</param>
+        public static ImmutableSortedDictionary<TKey, ImmutableHashSet<TElement>> Add<TKey, TElement>(
+            this ImmutableSortedDictionary<TKey, ImmutableHashSet<TElement>> dictionary,
+            TKey key,
+            TElement element
+            )
+        {
+            ImmutableHashSet<TElement> set;
+            if (!dictionary.TryGetValue(key, out set))
+            {
+                set = ImmutableHashSet<TElement>.Empty.Add(element);
+                return dictionary.Add(key, set);
+            }
+
+            return dictionary.SetItem(key, set.Add(element));
+        }
+
+        /// <summary>
+        /// Removes the specified element to the collection with the specified key. If the entry's count drops to
+        /// zero, then the entry will be removed.
+        /// </summary>
+        /// <typeparam name="TKey">The key type</typeparam>
+        /// <typeparam name="TElement">The collection element type</typeparam>
+        /// <param name="dictionary">The source dictionary to be added to</param>
+        /// <param name="key">The key</param>
+        /// <param name="element">The element to be added</param>
+        public static ImmutableDictionary<TKey, ImmutableHashSet<TElement>> Remove<TKey, TElement>(
+            this ImmutableDictionary<TKey, ImmutableHashSet<TElement>> dictionary,
+            TKey key,
+            TElement element
+            )
+        {
+            ImmutableHashSet<TElement> set;
+            if (!dictionary.TryGetValue(key, out set))
+            {
+                return dictionary;
+            }
+
+            set = set.Remove(element);
+            if (set.Count == 0)
+            {
+                return dictionary.Remove(key);
+            }
+
+            return dictionary.SetItem(key, set);
+        }
+
+        /// <summary>
+        /// Removes the specified element to the collection with the specified key. If the entry's count drops to
+        /// zero, then the entry will be removed.
+        /// </summary>
+        /// <typeparam name="TKey">The key type</typeparam>
+        /// <typeparam name="TElement">The collection element type</typeparam>
+        /// <param name="dictionary">The source dictionary to be added to</param>
+        /// <param name="key">The key</param>
+        /// <param name="element">The element to be added</param>
+        public static ImmutableSortedDictionary<TKey, ImmutableHashSet<TElement>> Remove<TKey, TElement>(
+            this ImmutableSortedDictionary<TKey, ImmutableHashSet<TElement>> dictionary,
+            TKey key,
+            TElement element
+            )
+        {
+            ImmutableHashSet<TElement> set;
+            if (!dictionary.TryGetValue(key, out set))
+            {
+                return dictionary;
+            }
+
+            set = set.Remove(element);
+            if (set.Count == 0)
+            {
+                return dictionary.Remove(key);
+            }
+
+            return dictionary.SetItem(key, set);
+        }
+
+        /// <summary>
         /// Adds the specified Tick to the Ticks collection. If an entry does not exist for the specified key then one will be created.
         /// </summary>
         /// <param name="dictionary">The ticks dictionary</param>
@@ -685,6 +836,52 @@ namespace QuantConnect
         }
 
         /// <summary>
+        /// Converts a decimal into a rounded number ending with K (thousands), M (millions), B (billions), etc.
+        /// </summary>
+        /// <param name="number">Number to convert</param>
+        /// <returns>Formatted number with figures written in shorthand form</returns>
+        public static string ToFinancialFigures(this decimal number)
+        {
+            if (number < 1000)
+            {
+                return number.ToStringInvariant();
+            }
+
+            // Subtract by multiples of 5 to round down to nearest round number
+            if (number < 10000)
+            {
+                return $"{number - 5m:#,.##}K";
+            }
+
+            if (number < 100000)
+            {
+                return $"{number - 50m:#,.#}K";
+            }
+
+            if (number < 1000000)
+            {
+                return $"{number - 500m:#,.}K";
+            }
+
+            if (number < 10000000)
+            {
+                return $"{number - 5000m:#,,.##}M";
+            }
+
+            if (number < 100000000)
+            {
+                return $"{number - 50000m:#,,.#}M";
+            }
+
+            if (number < 1000000000)
+            {
+                return $"{number - 500000m:#,,.}M";
+            }
+
+            return $"{number - 5000000m:#,,,.##}B";
+        }
+
+        /// <summary>
         /// Will truncate the provided decimal, without rounding, to 3 decimal places
         /// </summary>
         /// <param name="value">The value to truncate</param>
@@ -726,9 +923,10 @@ namespace QuantConnect
         /// <param name="input">The value to be cast</param>
         /// <returns>The input value as a decimal, if the value is too large or to small to be represented
         /// as a decimal, then the closest decimal value will be returned</returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static decimal SafeDecimalCast(this double input)
         {
-            if (double.IsNaN(input) || double.IsInfinity(input))
+            if (input.IsNaNOrInfinity())
             {
                 throw new ArgumentException(
                     $"It is not possible to cast a non-finite floating-point value ({input}) as decimal. Please review math operations and verify the result is valid.",
@@ -758,7 +956,7 @@ namespace QuantConnect
 
         /// <summary>
         /// Will remove any trailing zeros for the provided decimal and convert to string.
-        /// Uses <see cref="Normalize"/>.
+        /// Uses <see cref="Normalize(decimal)"/>.
         /// </summary>
         /// <param name="input">The <see cref="decimal"/> to convert to <see cref="string"/></param>
         /// <returns>Input converted to <see cref="string"/> with no trailing zeros</returns>
@@ -816,6 +1014,26 @@ namespace QuantConnect
             var lo = (int)value;
             var mid = (int)(value >> 32);
             return new decimal(lo, mid, 0, isNegative, (byte)(hasDecimals ? decimalPlaces : 0));
+        }
+
+        /// <summary>
+        /// Extension method for faster string to normalized decimal conversion, i.e. 20.0% should be parsed into 0.2
+        /// </summary>
+        /// <param name="str">String to be converted to positive decimal value</param>
+        /// <remarks>
+        /// Leading and trailing whitespace chars are ignored
+        /// </remarks>
+        /// <returns>Decimal value of the string</returns>
+        public static decimal ToNormalizedDecimal(this string str)
+        {
+            var trimmed = str.Trim();
+            var value = str.TrimEnd('%').ToDecimal();
+            if (trimmed.EndsWith("%"))
+            {
+                value /= 100;
+            }
+
+            return value;
         }
 
         /// <summary>
@@ -929,9 +1147,20 @@ namespace QuantConnect
         }
 
         /// <summary>
+        /// Check if a number is NaN or infinity
+        /// </summary>
+        /// <param name="value">The double value to check</param>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static bool IsNaNOrInfinity(this double value)
+        {
+            return double.IsNaN(value) || double.IsInfinity(value);
+        }
+
+        /// <summary>
         /// Check if a number is NaN or equal to zero
         /// </summary>
         /// <param name="value">The double value to check</param>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static bool IsNaNOrZero(this double value)
         {
             return double.IsNaN(value) || Math.Abs(value) < double.Epsilon;
@@ -1066,6 +1295,7 @@ namespace QuantConnect
         /// <param name="exchangeHours">The exchange hours to determine open times</param>
         /// <param name="extendedMarket">True for extended market hours, otherwise false</param>
         /// <returns>Rounded datetime</returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static DateTime ExchangeRoundDown(this DateTime dateTime, TimeSpan interval, SecurityExchangeHours exchangeHours, bool extendedMarket)
         {
             // can't round against a zero interval
@@ -1090,6 +1320,7 @@ namespace QuantConnect
         /// <param name="roundingTimeZone">The time zone to perform the rounding in</param>
         /// <param name="extendedMarket">True for extended market hours, otherwise false</param>
         /// <returns>Rounded datetime</returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static DateTime ExchangeRoundDownInTimeZone(this DateTime dateTime, TimeSpan interval, SecurityExchangeHours exchangeHours, DateTimeZone roundingTimeZone, bool extendedMarket)
         {
             // can't round against a zero interval
@@ -1153,6 +1384,7 @@ namespace QuantConnect
         /// <param name="to">The time zone to be converted to</param>
         /// <param name="strict">True for strict conversion, this will throw during ambiguitities, false for lenient conversion</param>
         /// <returns>The time in terms of the to time zone</returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static DateTime ConvertTo(this DateTime time, DateTimeZone from, DateTimeZone to, bool strict = false)
         {
             if (strict)
@@ -1160,7 +1392,11 @@ namespace QuantConnect
                 return from.AtStrictly(LocalDateTime.FromDateTime(time)).WithZone(to).ToDateTimeUnspecified();
             }
 
-            return from.AtLeniently(LocalDateTime.FromDateTime(time)).WithZone(to).ToDateTimeUnspecified();
+            // `InZone` sets the LocalDateTime's timezone, `WithZone` is the tz the time will be converted into.
+            return LocalDateTime.FromDateTime(time)
+                .InZone(from, _mappingResolver)
+                .WithZone(to)
+                .ToDateTimeUnspecified();
         }
 
         /// <summary>
@@ -1182,6 +1418,7 @@ namespace QuantConnect
         /// <param name="from">The time zone the specified <paramref name="time"/> is in</param>
         /// <param name="strict">True for strict conversion, this will throw during ambiguitities, false for lenient conversion</param>
         /// <returns>The time in terms of the to time zone</returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static DateTime ConvertToUtc(this DateTime time, DateTimeZone from, bool strict = false)
         {
             if (strict)
@@ -1189,7 +1426,10 @@ namespace QuantConnect
                 return from.AtStrictly(LocalDateTime.FromDateTime(time)).ToDateTimeUtc();
             }
 
-            return from.AtLeniently(LocalDateTime.FromDateTime(time)).ToDateTimeUtc();
+            // Set the local timezone with `InZone` and convert to UTC
+            return LocalDateTime.FromDateTime(time)
+                .InZone(from, _mappingResolver)
+                .ToDateTimeUtc();
         }
 
         /// <summary>
@@ -1338,6 +1578,32 @@ namespace QuantConnect
         }
 
         /// <summary>
+        /// Attempts to convert the string into a <see cref="SecurityType"/> enum value
+        /// </summary>
+        /// <param name="value">string value to convert to SecurityType</param>
+        /// <param name="securityType">SecurityType output</param>
+        /// <param name="ignoreCase">Ignore casing</param>
+        /// <returns>true if parsed into a SecurityType successfully, false otherwise</returns>
+        /// <remarks>
+        /// Logs once if we've encountered an invalid SecurityType
+        /// </remarks>
+        public static bool TryParseSecurityType(this string value, out SecurityType securityType, bool ignoreCase = true)
+        {
+            if (Enum.TryParse(value, ignoreCase, out securityType))
+            {
+                return true;
+            }
+
+            if (_invalidSecurityTypes.Add(value))
+            {
+                Log.Error($"Extensions.TryParseSecurityType(): Attempted to parse unknown SecurityType: {value}");
+            }
+
+            return false;
+
+        }
+
+        /// <summary>
         /// Converts the specified string value into the specified type
         /// </summary>
         /// <typeparam name="T">The output type</typeparam>
@@ -1358,7 +1624,7 @@ namespace QuantConnect
         {
             if (type.IsEnum)
             {
-                return Enum.Parse(type, value);
+                return Enum.Parse(type, value, true);
             }
 
             if (typeof (IConvertible).IsAssignableFrom(type))
@@ -1512,11 +1778,14 @@ namespace QuantConnect
                 case SecurityType.Base:
                 case SecurityType.Equity:
                 case SecurityType.Option:
+                case SecurityType.FutureOption:
                 case SecurityType.Commodity:
                 case SecurityType.Forex:
                 case SecurityType.Future:
                 case SecurityType.Cfd:
                 case SecurityType.Crypto:
+                case SecurityType.Index:
+                case SecurityType.IndexOption:
                     return true;
                 default:
                     return false;
@@ -1524,9 +1793,76 @@ namespace QuantConnect
         }
 
         /// <summary>
+        /// Determines if the provided SecurityType is a type of Option.
+        /// Valid option types are: Equity Options, Futures Options, and Index Options.
+        /// </summary>
+        /// <param name="securityType">The SecurityType to check if it's an option asset</param>
+        /// <returns>
+        /// true if the asset has the makings of an option (exercisable, expires, and is a derivative of some underlying),
+        /// false otherwise.
+        /// </returns>
+        public static bool IsOption(this SecurityType securityType)
+        {
+            switch (securityType)
+            {
+                case SecurityType.Option:
+                case SecurityType.FutureOption:
+                case SecurityType.IndexOption:
+                    return true;
+
+                default:
+                    return false;
+            }
+        }
+
+        /// <summary>
+        /// Determines if the provided SecurityType has a matching option SecurityType, used to represent
+        /// the current SecurityType as a derivative.
+        /// </summary>
+        /// <param name="securityType">The SecurityType to check if it has options available</param>
+        /// <returns>true if there are options for the SecurityType, false otherwise</returns>
+        public static bool HasOptions(this SecurityType securityType)
+        {
+            switch (securityType)
+            {
+                case SecurityType.Equity:
+                case SecurityType.Future:
+                case SecurityType.Index:
+                    return true;
+
+                default:
+                    return false;
+            }
+        }
+
+        /// <summary>
+        /// Gets the default <see cref="OptionStyle"/> for the provided <see cref="SecurityType"/>
+        /// </summary>
+        /// <param name="securityType">SecurityType to get default OptionStyle for</param>
+        /// <returns>Default OptionStyle for the SecurityType</returns>
+        /// <exception cref="ArgumentException">The SecurityType has no options available for it or it is not an option</exception>
+        public static OptionStyle DefaultOptionStyle(this SecurityType securityType)
+        {
+            if (!securityType.HasOptions() && !securityType.IsOption())
+            {
+                throw new ArgumentException($"The SecurityType {securityType} has no default OptionStyle, because it has no options available for it");
+            }
+
+            switch (securityType)
+            {
+                case SecurityType.Index:
+                case SecurityType.IndexOption:
+                    return OptionStyle.European;
+
+                default:
+                    return OptionStyle.American;
+            }
+        }
+
+        /// <summary>
         /// Converts the specified <paramref name="optionRight"/> value to its corresponding string representation
         /// </summary>
-        /// <remarks>This method provides faster performance than enum <see cref="ToString"/></remarks>
+        /// <remarks>This method provides faster performance than enum <see cref="Object.ToString"/></remarks>
         /// <param name="optionRight">The optionRight value</param>
         /// <returns>A string representation of the specified OptionRight value</returns>
         public static string ToStringPerformance(this OptionRight optionRight)
@@ -1559,12 +1895,18 @@ namespace QuantConnect
                     return "equity";
                 case SecurityType.Option:
                     return "option";
+                case SecurityType.FutureOption:
+                    return "futureoption";
+                case SecurityType.IndexOption:
+                    return "indexoption";
                 case SecurityType.Commodity:
                     return "commodity";
                 case SecurityType.Forex:
                     return "forex";
                 case SecurityType.Future:
                     return "future";
+                case SecurityType.Index:
+                    return "index";
                 case SecurityType.Cfd:
                     return "cfd";
                 case SecurityType.Crypto:
@@ -1633,6 +1975,7 @@ namespace QuantConnect
         {
             var limitPrice = 0m;
             var stopPrice = 0m;
+            var triggerPrice = 0m;
 
             switch (order.Type)
             {
@@ -1648,6 +1991,11 @@ namespace QuantConnect
                     var stopLimitOrder = order as StopLimitOrder;
                     stopPrice = stopLimitOrder.StopPrice;
                     limitPrice = stopLimitOrder.LimitPrice;
+                    break;
+                case OrderType.LimitIfTouched:
+                    var limitIfTouched = order as LimitIfTouchedOrder;
+                    triggerPrice = limitIfTouched.TriggerPrice;
+                    limitPrice = limitIfTouched.LimitPrice;
                     break;
                 case OrderType.OptionExercise:
                 case OrderType.Market:
@@ -1666,6 +2014,7 @@ namespace QuantConnect
                 order.Quantity,
                 stopPrice,
                 limitPrice,
+                triggerPrice,
                 order.Time,
                 order.Tag,
                 order.Properties);
@@ -1676,6 +2025,12 @@ namespace QuantConnect
             return orderTicket;
         }
 
+        /// <summary>
+        /// Process all items in collection through given handler
+        /// </summary>
+        /// <typeparam name="T"></typeparam>
+        /// <param name="collection">Collection to process</param>
+        /// <param name="handler">Handler to process those items with</param>
         public static void ProcessUntilEmpty<T>(this IProducerConsumerCollection<T> collection, Action<T> handler)
         {
             T item;
@@ -2057,7 +2412,7 @@ namespace QuantConnect
                 {
                     an = new AssemblyName(pyObject.Repr().Split('\'')[1]);
                 }
-                var typeBuilder = AppDomain.CurrentDomain
+                var typeBuilder = AssemblyBuilder
                     .DefineDynamicAssembly(an, AssemblyBuilderAccess.Run)
                     .DefineDynamicModule("MainModule")
                     .DefineType(an.Name, TypeAttributes.Class, type);
@@ -2182,6 +2537,65 @@ namespace QuantConnect
         }
 
         /// <summary>
+        /// Gets the delisting date for the provided Symbol
+        /// </summary>
+        /// <param name="symbol">The symbol to lookup the last trading date</param>
+        /// <param name="mapFile">Map file to use for delisting date. Defaults to SID.DefaultDate if no value is passed and is equity.</param>
+        /// <returns></returns>
+        public static DateTime GetDelistingDate(this Symbol symbol, MapFile mapFile = null)
+        {
+            switch (symbol.ID.SecurityType)
+            {
+                case SecurityType.Future:
+                    return symbol.ID.Date;
+                case SecurityType.Option:
+                    return OptionSymbol.GetLastDayOfTrading(symbol);
+                case SecurityType.FutureOption:
+                    return FutureOptionSymbol.GetLastDayOfTrading(symbol);
+                case SecurityType.IndexOption:
+                    return symbol.ID.Date;
+                default:
+                    return mapFile?.DelistingDate ?? SecurityIdentifier.DefaultDate;
+            }
+        }
+
+        /// <summary>
+        /// Returns the delisted liquidation time for a given delisting warning and exchange hours
+        /// </summary>
+        /// <param name="delisting">The delisting warning event</param>
+        /// <param name="exchangeHours">The securities exchange hours to use</param>
+        /// <returns>The securities liquidation time</returns>
+        public static DateTime GetLiquidationTime(this Delisting delisting, SecurityExchangeHours exchangeHours)
+        {
+            if (delisting.Type != DelistingType.Warning)
+            {
+                throw new ArgumentException("GetLiquidationTime can only be called with the liquidate warning event", nameof(delisting));
+            }
+
+            var delistingWarning = delisting.Time.Date;
+
+            // by default liquidation/exercise will happen a few min before the end of the last trading day
+            var liquidationTime = delistingWarning.AddDays(1).Add(DelistingMarketCloseOffsetSpan);
+
+            // if the market is open today (most probably should), we will determine the market close and liquidate a few min before instead
+            if (exchangeHours.IsDateOpen(delistingWarning))
+            {
+                var marketOpen = delistingWarning;
+                if (!exchangeHours.IsOpen(marketOpen, false))
+                {
+                    // if the market isn't open at 0:00 we get next market open
+                    marketOpen = exchangeHours.GetNextMarketOpen(delistingWarning, false);
+                }
+
+                // using current market open we will get next market close which should be today and we will liquidate a few min before
+                liquidationTime = exchangeHours.GetNextMarketClose(marketOpen, false)
+                    .Add(DelistingMarketCloseOffsetSpan);
+            }
+
+            return liquidationTime;
+        }
+
+        /// <summary>
         /// Scale data based on factor function
         /// </summary>
         public static BaseData Scale(this BaseData data, Func<decimal, decimal> factor)
@@ -2201,8 +2615,8 @@ namespace QuantConnect
                 case MarketDataType.Tick:
                     var securityType = data.Symbol.SecurityType;
                     if (securityType != SecurityType.Equity &&
-                        securityType != SecurityType.Option &&
-                        securityType != SecurityType.Future)
+                        securityType != SecurityType.Future &&
+                        !securityType.IsOption())
                     {
                         break;
                     }
@@ -2357,7 +2771,7 @@ namespace QuantConnect
         /// <returns><see cref="OptionChainUniverse"/> for the given symbol</returns>
         public static OptionChainUniverse CreateOptionChain(this IAlgorithm algorithm, Symbol symbol, Func<OptionFilterUniverse, OptionFilterUniverse> filter, UniverseSettings universeSettings = null)
         {
-            if (symbol.SecurityType != SecurityType.Option)
+            if (!symbol.SecurityType.IsOption())
             {
                 throw new ArgumentException("CreateOptionChain requires an option symbol.");
             }
@@ -2367,8 +2781,20 @@ namespace QuantConnect
             var underlying = symbol.Underlying;
             if (!symbol.IsCanonical())
             {
+                // The underlying can be a non-equity Symbol, so we must explicitly
+                // initialize the Symbol using the CreateOption(Symbol, ...) overload
+                // to ensure that the underlying SecurityType is preserved and not
+                // written as SecurityType.Equity.
                 var alias = $"?{underlying.Value}";
-                symbol = Symbol.Create(underlying.Value, SecurityType.Option, market, alias);
+
+                symbol = Symbol.CreateOption(
+                    underlying,
+                    market,
+                    underlying.SecurityType.DefaultOptionStyle(),
+                    default(OptionRight),
+                    0m,
+                    SecurityIdentifier.DefaultDate,
+                    alias);
             }
 
             // resolve defaults if not specified
@@ -2400,6 +2826,33 @@ namespace QuantConnect
             optionChain.IsTradable = false;
 
             return new OptionChainUniverse(optionChain, settings, algorithm.LiveMode);
+        }
+
+        /// <summary>
+        /// Inverts the specified <paramref name="right"/>
+        /// </summary>
+        public static OptionRight Invert(this OptionRight right)
+        {
+            switch (right)
+            {
+                case OptionRight.Call: return OptionRight.Put;
+                case OptionRight.Put:  return OptionRight.Call;
+                default:
+                    throw new ArgumentOutOfRangeException(nameof(right), right, null);
+            }
+        }
+
+        /// <summary>
+        /// Compares two values using given operator
+        /// </summary>
+        /// <typeparam name="T"></typeparam>
+        /// <param name="op">Comparison operator</param>
+        /// <param name="arg1">The first value</param>
+        /// <param name="arg2">The second value</param>
+        /// <returns>Returns true if its left-hand operand meets the operator value to its right-hand operand, false otherwise</returns>
+        public static bool Compare<T>(this ComparisonOperatorTypes op, T arg1, T arg2) where T : IComparable
+        {
+            return ComparisonOperator.Compare(op, arg1, arg2);
         }
     }
 }

@@ -607,6 +607,17 @@ namespace QuantConnect.Tests.Common.Util
             Assert.AreEqual(-0m, value);
         }
 
+        [TestCase("1.23%", 0.0123d)]
+        [TestCase("-1.23%", -0.0123d)]
+        [TestCase("31.2300%", 0.3123d)]
+        [TestCase("20%", 0.2d)]
+        [TestCase("-20%", -0.2d)]
+        [TestCase("220%", 2.2d)]
+        public void ConvertsPercent(string input, double expected)
+        {
+            Assert.AreEqual(new decimal(expected), input.ToNormalizedDecimal());
+        }
+
         [Test]
         public void ConvertsTimeSpanFromString()
         {
@@ -1103,6 +1114,24 @@ actualDictionary.update({'IBM': 5})
             Assert.AreEqual(order.Tag, orderTicket.Tag);
             Assert.AreEqual(order.Time, orderTicket.Time);
             Assert.AreEqual(order.SecurityType, orderTicket.SecurityType);
+        }
+
+        [TestCase(4000, "4K")]
+        [TestCase(4103, "4.1K")]
+        [TestCase(40000, "40K")]
+        [TestCase(45321, "45.3K")]
+        [TestCase(654321, "654K")]
+        [TestCase(600031, "600K")]
+        [TestCase(1304303, "1.3M")]
+        [TestCase(2600000, "2.6M")]
+        [TestCase(26000000, "26M")]
+        [TestCase(260000000, "260M")]
+        [TestCase(2600000000, "2.6B")]
+        [TestCase(26000000000, "26B")]
+        public void ToFinancialFigures(double number, string expected)
+        {
+            var value = ((decimal)number).ToFinancialFigures();
+            Assert.AreEqual(expected, value);
         }
 
         [Test]

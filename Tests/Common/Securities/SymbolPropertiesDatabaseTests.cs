@@ -20,6 +20,7 @@ using System.Net;
 using System.Text;
 using Newtonsoft.Json;
 using NUnit.Framework;
+using QuantConnect.Logging;
 using QuantConnect.Securities;
 
 namespace QuantConnect.Tests.Common.Securities
@@ -31,8 +32,8 @@ namespace QuantConnect.Tests.Common.Securities
         public void LoadsLotSize()
         {
             var db = SymbolPropertiesDatabase.FromDataFolder();
-
-            var symbolProperties = db.GetSymbolProperties(Market.FXCM, "EURGBP", SecurityType.Forex, "GBP");
+            var symbol = Symbol.Create("EURGBP", SecurityType.Forex, Market.FXCM);
+            var symbolProperties = db.GetSymbolProperties(symbol.ID.Market, symbol, symbol.SecurityType, "GBP");
 
             Assert.AreEqual(symbolProperties.LotSize, 1000);
         }
@@ -41,8 +42,8 @@ namespace QuantConnect.Tests.Common.Securities
         public void LoadsQuoteCurrency()
         {
             var db = SymbolPropertiesDatabase.FromDataFolder();
-
-            var symbolProperties = db.GetSymbolProperties(Market.FXCM, "EURGBP", SecurityType.Forex, "GBP");
+            var symbol = Symbol.Create("EURGBP", SecurityType.Forex, Market.FXCM);
+            var symbolProperties = db.GetSymbolProperties(symbol.ID.Market, symbol, symbol.SecurityType, "GBP");
 
             Assert.AreEqual(symbolProperties.QuoteCurrency, "GBP");
         }
@@ -73,6 +74,21 @@ namespace QuantConnect.Tests.Common.Securities
 
                 Assert.AreNotEqual(baseCurrency, quoteCurrency);
             }
+        }
+
+        [Test]
+        public void CustomEntriesStoredAndFetched()
+        {
+            var database = SymbolPropertiesDatabase.FromDataFolder();
+            var ticker = "BTC";
+            var properties = SymbolProperties.GetDefault("USD");
+
+            // Set the entry
+            Assert.IsTrue(database.SetEntry(Market.USA, ticker, SecurityType.Base, properties));
+
+            // Fetch the entry to ensure we can access it with the ticker
+            var fetchedProperties = database.GetSymbolProperties(Market.USA, ticker, SecurityType.Base, "USD");
+            Assert.AreSame(properties, fetchedProperties);
         }
 
         [TestCase(Market.FXCM, SecurityType.Cfd)]
@@ -149,7 +165,7 @@ namespace QuantConnect.Tests.Common.Securities
                 }
             }
 
-            Console.WriteLine(sb.ToString());
+            Log.Trace(sb.ToString());
         }
 
         private class GdaxCurrency
@@ -273,19 +289,19 @@ namespace QuantConnect.Tests.Common.Securities
                     else
                     {
                         // should never happen
-                        Console.WriteLine($"Skipping pair with unknown format: {pair}");
+                        Log.Trace($"Skipping pair with unknown format: {pair}");
                         continue;
                     }
 
                     string baseDescription, quoteDescription;
                     if (!currencyLabels.TryGetValue(baseCurrency, out baseDescription))
                     {
-                        Console.WriteLine($"Base currency description not found: {baseCurrency}");
+                        Log.Trace($"Base currency description not found: {baseCurrency}");
                         baseDescription = baseCurrency;
                     }
                     if (!currencyLabels.TryGetValue(quoteCurrency, out quoteDescription))
                     {
-                        Console.WriteLine($"Quote currency description not found: {quoteCurrency}");
+                        Log.Trace($"Quote currency description not found: {quoteCurrency}");
                         quoteDescription = quoteCurrency;
                     }
 
@@ -329,7 +345,7 @@ namespace QuantConnect.Tests.Common.Securities
                 }
             }
 
-            Console.WriteLine(sb.ToString());
+            Log.Trace(sb.ToString());
         }
 
         private class BitfinexSymbolDetails
@@ -358,5 +374,59 @@ namespace QuantConnect.Tests.Common.Securities
 
         #endregion
 
+        [TestCase("ES", Market.CME, 50, 0.25)]
+        [TestCase("ZB", Market.CBOT, 1000, 0.015625)]
+        [TestCase("ZW", Market.CBOT, 5000, 0.00125)]
+        [TestCase("SI", Market.COMEX, 5000, 0.001)]
+        public void ReadsFuturesOptionsEntries(string ticker, string market, int expectedMultiplier, double expectedMinimumPriceFluctuation)
+        {
+            var future = Symbol.CreateFuture(ticker, market, SecurityIdentifier.DefaultDate);
+            var option = Symbol.CreateOption(
+                future,
+                market,
+                default(OptionStyle),
+                default(OptionRight),
+                default(decimal),
+                SecurityIdentifier.DefaultDate);
+
+            var db = SymbolPropertiesDatabase.FromDataFolder();
+            var results = db.GetSymbolProperties(market, option, SecurityType.FutureOption, "USD");
+
+            Assert.AreEqual((decimal)expectedMultiplier, results.ContractMultiplier);
+            Assert.AreEqual((decimal)expectedMinimumPriceFluctuation, results.MinimumPriceVariation);
+        }
+
+        [TestCase("index")]
+        [TestCase("indexoption")]
+        [TestCase("bond")]
+        [TestCase("swap")]
+        public void HandlesUnknownSecurityType(string securityType)
+        {
+            var line = string.Join(",",
+                "usa",
+                "ABCXYZ",
+                securityType,
+                "Example Asset",
+                "USD",
+                "100",
+                "0.01",
+                "1");
+
+            SecurityDatabaseKey key;
+            Assert.DoesNotThrow(() => TestingSymbolPropertiesDatabase.TestFromCsvLine(line, out key));
+        }
+
+        private class TestingSymbolPropertiesDatabase : SymbolPropertiesDatabase
+        {
+            public TestingSymbolPropertiesDatabase(string file)
+                : base(file)
+            {
+            }
+
+            public static SymbolProperties TestFromCsvLine(string line, out SecurityDatabaseKey key)
+            {
+                return FromCsvLine(line, out key);
+            }
+        }
     }
 }

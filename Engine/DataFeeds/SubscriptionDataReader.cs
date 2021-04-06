@@ -240,7 +240,7 @@ namespace QuantConnect.Lean.Engine.DataFeeds
                     // only take the resolved map file if it has data, otherwise we'll use the empty one we defined above
                     if (mapFile.Any()) _mapFile = mapFile;
 
-                    if (!_config.IsCustomData && _config.SecurityType != SecurityType.Option)
+                    if (!_config.IsCustomData && !_config.SecurityType.IsOption())
                     {
                         var factorFile = _factorFileProvider.Get(_config.Symbol);
                         _hasScaleFactors = factorFile != null;
@@ -282,19 +282,8 @@ namespace QuantConnect.Lean.Engine.DataFeeds
                 }
             }
 
-            // Estimate delisting date.
-            switch (_config.Symbol.ID.SecurityType)
-            {
-                case SecurityType.Future:
-                    _delistingDate = _config.Symbol.ID.Date;
-                    break;
-                case SecurityType.Option:
-                    _delistingDate = OptionSymbol.GetLastDayOfTrading(_config.Symbol);
-                    break;
-                default:
-                    _delistingDate = _mapFile.DelistingDate;
-                    break;
-            }
+            _delistingDate = _config.Symbol.GetDelistingDate(_mapFile);
+
             // adding a day so we stop at EOD
             _delistingDate = _delistingDate.AddDays(1);
 
@@ -383,13 +372,6 @@ namespace QuantConnect.Lean.Engine.DataFeeds
                         continue;
                     }
 
-                    if (instance.Time > _periodFinish)
-                    {
-                        // stop reading when we get a value after the end
-                        _endOfStream = true;
-                        return false;
-                    }
-
                     // if we move past our current 'date' then we need to do daily things, such
                     // as updating factors and symbol mapping
                     if (instance.EndTime.ConvertTo(_config.ExchangeTimeZone, _config.DataTimeZone).Date > _tradeableDates.Current)
@@ -419,6 +401,15 @@ namespace QuantConnect.Lean.Engine.DataFeeds
                             // if we DO NOT get a new enumerator we use current instance, means its a valid source
                             // even if after 'currentTradeableDate'
                         }
+                    }
+
+                    // We have to perform this check after refreshing the enumerator, if appropriate
+                    // 'instance' could be a data point far in the future due to remapping (GH issue 5232) in which case it will be dropped
+                    if (instance.Time > _periodFinish)
+                    {
+                        // stop reading when we get a value after the end
+                        _endOfStream = true;
+                        return false;
                     }
 
                     // we've made it past all of our filters, we're withing the requested start/end of the subscription,

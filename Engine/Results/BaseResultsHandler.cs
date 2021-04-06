@@ -42,10 +42,12 @@ namespace QuantConnect.Lean.Engine.Results
         private static readonly TextWriter StandardOut = Console.Out;
         private static readonly TextWriter StandardError = Console.Error;
 
+        private string _hostName;
+
         /// <summary>
         /// The main loop update interval
         /// </summary>
-        protected TimeSpan MainUpdateInterval = TimeSpan.FromSeconds(3);
+        protected virtual TimeSpan MainUpdateInterval => TimeSpan.FromSeconds(3);
 
         /// <summary>
         /// The chart update interval
@@ -86,6 +88,11 @@ namespace QuantConnect.Lean.Engine.Results
         /// True if the exit has been triggered
         /// </summary>
         protected volatile bool ExitTriggered;
+
+        /// <summary>
+        /// Event set when exit is triggered
+        /// </summary>
+        protected ManualResetEvent ExitEvent { get; }
 
         /// <summary>
         /// The log store instance
@@ -197,6 +204,7 @@ namespace QuantConnect.Lean.Engine.Results
         /// </summary>
         protected BaseResultsHandler()
         {
+            ExitEvent = new ManualResetEvent(false);
             Charts = new ConcurrentDictionary<string, Chart>();
             Messages = new ConcurrentQueue<Packet>();
             RuntimeStatistics = new Dictionary<string, string>();
@@ -232,6 +240,7 @@ namespace QuantConnect.Lean.Engine.Results
         protected virtual Dictionary<string, string> GetServerStatistics(DateTime utcNow)
         {
             var serverStatistics = OS.GetServerStatistics();
+            serverStatistics["Hostname"] = _hostName;
             var upTime = utcNow - StartTime;
             serverStatistics["Up Time"] = $"{upTime.Days}d {upTime:hh\\:mm\\:ss}";
             serverStatistics["Total RAM (MB)"] = RamAllocation;
@@ -305,6 +314,7 @@ namespace QuantConnect.Lean.Engine.Results
         /// <param name="transactionHandler">The transaction handler used to get the algorithms <see cref="Order"/> information</param>
         public virtual void Initialize(AlgorithmNodePacket job, IMessagingHandler messagingHandler, IApi api, ITransactionHandler transactionHandler)
         {
+            _hostName = job.HostName ?? Environment.MachineName;
             MessagingHandler = messagingHandler;
             TransactionHandler = transactionHandler;
             CompileId = job.CompileId;
@@ -522,7 +532,8 @@ namespace QuantConnect.Lean.Engine.Results
         /// Gets the algorithm runtime statistics
         /// </summary>
         protected Dictionary<string, string> GetAlgorithmRuntimeStatistics(Dictionary<string, string> summary,
-            Dictionary<string, string> runtimeStatistics = null)
+            Dictionary<string, string> runtimeStatistics = null,
+            decimal? capacityEstimate = null)
         {
             if (runtimeStatistics == null)
             {
@@ -547,6 +558,10 @@ namespace QuantConnect.Lean.Engine.Results
             runtimeStatistics["Equity"] = accountCurrencySymbol + Algorithm.Portfolio.TotalPortfolioValue.ToStringInvariant("N2");
             runtimeStatistics["Holdings"] = accountCurrencySymbol + Algorithm.Portfolio.TotalHoldingsValue.ToStringInvariant("N2");
             runtimeStatistics["Volume"] = accountCurrencySymbol + Algorithm.Portfolio.TotalSaleVolume.ToStringInvariant("N2");
+            if (capacityEstimate != null)
+            {
+                runtimeStatistics["Capacity"] = accountCurrencySymbol + capacityEstimate.Value.RoundToSignificantDigits(2).ToFinancialFigures();
+            }
 
             return runtimeStatistics;
         }
@@ -555,7 +570,7 @@ namespace QuantConnect.Lean.Engine.Results
         /// Will generate the statistics results and update the provided runtime statistics
         /// </summary>
         protected StatisticsResults GenerateStatisticsResults(Dictionary<string, Chart> charts,
-            SortedDictionary<DateTime, decimal> profitLoss = null)
+            SortedDictionary<DateTime, decimal> profitLoss = null, decimal estimatedStrategyCapacity = 0m)
         {
             var statisticsResults = new StatisticsResults();
             if (profitLoss == null)
@@ -586,7 +601,7 @@ namespace QuantConnect.Lean.Engine.Results
                     var trades = Algorithm.TradeBuilder.ClosedTrades;
 
                     statisticsResults = StatisticsBuilder.Generate(trades, profitLoss, equity, performance, benchmark,
-                        StartingPortfolioValue, Algorithm.Portfolio.TotalFees, totalTransactions);
+                        StartingPortfolioValue, Algorithm.Portfolio.TotalFees, totalTransactions, estimatedStrategyCapacity);
                 }
             }
             catch (Exception err)

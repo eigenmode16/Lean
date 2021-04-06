@@ -58,22 +58,33 @@ namespace QuantConnect.Lean.Engine.DataFeeds.Enumerators.Factories
             var lazyFactorFile =
                 new Lazy<FactorFile>(() => SubscriptionUtils.GetFactorFileToUse(config, factorFileProvider));
 
+            var tradableEventProviders = new List<ITradableDateEventProvider>();
+
+            if (config.Symbol.SecurityType == SecurityType.Equity)
+            {
+                tradableEventProviders.Add(new SplitEventProvider());
+                tradableEventProviders.Add(new DividendEventProvider());
+            }
+
+            if (config.Symbol.SecurityType == SecurityType.Equity
+                || config.Symbol.SecurityType == SecurityType.Base
+                || config.Symbol.SecurityType == SecurityType.Option)
+            {
+                tradableEventProviders.Add(new MappingEventProvider());
+            }
+
+            tradableEventProviders.Add(new DelistingEventProvider());
+
             var enumerator = new AuxiliaryDataEnumerator(
                 config,
                 lazyFactorFile,
                 new Lazy<MapFile>(() => GetMapFileToUse(config, mapFileResolver)),
-                new ITradableDateEventProvider[]
-                {
-                    new MappingEventProvider(),
-                    new SplitEventProvider(),
-                    new DividendEventProvider(),
-                    new DelistingEventProvider()
-                },
+                tradableEventProviders.ToArray(),
                 tradableDayNotifier,
                 includeAuxiliaryData,
                 startTime);
 
-            // avoid price scaling for backtesting; calculate it directly in worker 
+            // avoid price scaling for backtesting; calculate it directly in worker
             // and allow subscription to extract the the data depending on config data mode
             var dataEnumerator = rawDataEnumerator;
             if (enablePriceScaling)
@@ -97,8 +108,9 @@ namespace QuantConnect.Lean.Engine.DataFeeds.Enumerators.Factories
         /// <remarks>History provider is never emitting auxiliary data points</remarks>
         public static bool ShouldEmitAuxiliaryBaseData(SubscriptionDataConfig config)
         {
-            return config.SecurityType != SecurityType.Equity || !config.IsInternalFeed
-                && (config.Type == typeof(TradeBar) || config.Type == typeof(Tick) && config.TickType == TickType.Trade);
+            return !config.IsInternalFeed
+                // custom data could use remapping events, example 'CustomDataUsingMapping' regression algorithm
+                && (config.Type == typeof(TradeBar) || config.Type == typeof(Tick) && config.TickType == TickType.Trade || config.IsCustomData);
         }
 
         private static MapFile GetMapFileToUse(
